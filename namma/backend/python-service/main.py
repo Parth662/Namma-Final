@@ -139,6 +139,7 @@ def reconstruct(req: ReconstructRequest):
         print(f"[PythonEngine] Insufficient quality exception: {iqe.code} - {iqe.reason}")
         return {
             "success": False,
+            "rejected": bool(iqe.code.startswith("REJECTED_") or iqe.code.startswith("INSUFFICIENT_")),
             "error": iqe.code,
             "reason": iqe.reason,
             "suggestion": iqe.suggestion,

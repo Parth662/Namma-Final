@@ -58,6 +58,34 @@ export const startReconstructionWorker = () => {
         });
 
         if (!response.success) {
+          const isRejected = response.rejected || (response.error && (response.error.startsWith('REJECTED_') || response.error.startsWith('INSUFFICIENT_')));
+          if (isRejected) {
+            console.warn(`[Worker] Project ${projectId} rejected early: ${response.reason}`);
+            project.status = 'rejected';
+            project.currentStage = 'REJECTED';
+            project.progress = 0;
+            project.rejectionReason = response.reason;
+            project.rejectionSuggestion = response.suggestion;
+            await project.save();
+
+            reconJob.status = 'rejected';
+            reconJob.currentStage = 'REJECTED';
+            reconJob.rejectionReason = response.reason;
+            reconJob.rejectionSuggestion = response.suggestion;
+            reconJob.completedAt = new Date();
+            await reconJob.save();
+
+            emitProjectProgress(projectId, {
+              status: 'rejected',
+              stage: 'REJECTED',
+              progress: 0,
+              reason: response.reason,
+              suggestion: response.suggestion,
+            });
+
+            return { success: false, rejected: true, reason: response.reason };
+          }
+
           const customErr = new Error(response.reason || response.error || 'Reconstruction failed in Python 3D engine');
           customErr.code = response.error || 'INSUFFICIENT_RECONSTRUCTION_QUALITY';
           customErr.suggestion = response.suggestion || 'Record the area again while moving slowly with steady overlapping camera angles.';

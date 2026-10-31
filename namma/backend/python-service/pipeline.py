@@ -89,6 +89,94 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
     print(f"[FFmpeg] Successfully extracted {len(extracted)} frames from {os.path.basename(video_path)}")
     return extracted
 
+def check_early_rejection(frames_list):
+    """
+    Performs fast pre-checks before running expensive COLMAP SfM:
+    1. Brightness check
+    2. Motion/parallax check between consecutive frames
+    3. Global blur check (Laplacian variance)
+    4. Keypoint density check (ORB)
+    """
+    if len(frames_list) < 4:
+        raise InsufficientQualityException(
+            "REJECTED_TOO_SHORT",
+            f"Video yielded only {len(frames_list)} frames. A minimum of 4 frames is required.",
+            "Record at least 5 to 15 seconds orbiting the location."
+        )
+
+    min_brightness = float(os.environ.get("MIN_BRIGHTNESS", 15.0))
+    min_variance = float(os.environ.get("MIN_VARIANCE", 15.0))
+    min_motion = float(os.environ.get("MIN_MOTION_SCORE", 0.03))
+    min_keypoints = int(os.environ.get("MIN_KEYPOINTS", 80))
+
+    step = max(1, len(frames_list) // 12)
+    sample_paths = [frames_list[i] for i in range(0, len(frames_list), step)][:12]
+
+    grays = []
+    orb = cv2.ORB_create(nfeatures=500)
+    keypoint_counts = []
+    blur_scores = []
+    brightness_scores = []
+
+    for fpath in sample_paths:
+        img = cv2.imread(fpath)
+        if img is None:
+            continue
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        grays.append(gray)
+        brightness_scores.append(float(np.mean(gray)))
+        blur_scores.append(float(cv2.Laplacian(gray, cv2.CV_64F).var()))
+        kps = orb.detect(gray, None)
+        keypoint_counts.append(len(kps))
+
+    if not grays:
+        raise InsufficientQualityException("REJECTED_CORRUPTED", "Failed to read extracted frames from video.", "Check video encoding.")
+
+    # 1. Brightness Check
+    avg_brightness = float(np.mean(brightness_scores))
+    if avg_brightness < min_brightness:
+        raise InsufficientQualityException(
+            "REJECTED_TOO_DARK",
+            f"Video is too dark (average brightness: {avg_brightness:.1f} < {min_brightness}).",
+            "Record the area in better lighting conditions."
+        )
+
+    # 2. Blur Check
+    blurry_count = sum(1 for b in blur_scores if b < min_variance)
+    if blurry_count > (len(blur_scores) * 0.75):
+        avg_blur = float(np.mean(blur_scores))
+        raise InsufficientQualityException(
+            "REJECTED_BLURRY_FOOTAGE",
+            f"Video contains excessive motion blur (average sharpness: {avg_blur:.1f}).",
+            "Hold the phone steady and move slowly without sudden jerky camera movements."
+        )
+
+    # 3. Keypoint Density Check
+    avg_keypoints = float(np.mean(keypoint_counts))
+    if avg_keypoints < min_keypoints:
+        raise InsufficientQualityException(
+            "REJECTED_FEATURELESS",
+            f"Scenes lack sufficient visual texture (average keypoints: {avg_keypoints:.1f} < {min_keypoints}).",
+            "Avoid recording blank, single-color walls or featureless ground."
+        )
+
+    # 4. Motion / Static Check
+    motion_scores = []
+    for i in range(1, len(grays)):
+        diff = cv2.absdiff(grays[i-1], grays[i])
+        motion_scores.append(float(np.mean(diff)) / 255.0)
+
+    avg_motion = float(np.mean(motion_scores)) if motion_scores else 0.0
+    if avg_motion < min_motion:
+        raise InsufficientQualityException(
+            "REJECTED_STATIC_FOOTAGE",
+            f"Camera position remained static (motion score: {avg_motion:.3f} < {min_motion}). 3D reconstruction requires camera translation/orbiting.",
+            "Walk slowly around the perimeter of the room to provide parallax between viewpoints."
+        )
+
+    print(f"[PreCheck] Early quality check PASSED: brightness={avg_brightness:.1f}, blur={np.mean(blur_scores):.1f}, keypoints={avg_keypoints:.1f}, motion={avg_motion:.3f}")
+    return True
+
 def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=15.0):
     """
     Filters out blurry, dark, and near-duplicate frames.
@@ -509,6 +597,9 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
 
     # Step 1: Extract frames from video
     raw_frames = extract_frames(video_path, frames_dir)
+
+    # Step 1b: Early Rejection Pre-checks (brightness, blur, keypoints, camera motion)
+    check_early_rejection(raw_frames)
 
     # Step 2: Quality & Blur filtering
     filtered_frames = filter_quality_frames(raw_frames, filtered_dir)

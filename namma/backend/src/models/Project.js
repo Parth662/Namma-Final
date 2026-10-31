@@ -54,7 +54,7 @@ const projectSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['created', 'uploaded', 'queued', 'processing', 'completed', 'failed'],
+      enum: ['created', 'uploaded', 'queued', 'processing', 'completed', 'failed', 'rejected', 'cancelled'],
       default: 'created',
       index: true,
     },
@@ -67,6 +67,26 @@ const projectSchema = new mongoose.Schema(
     currentStage: {
       type: String,
       default: 'CREATED',
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
+    },
+    rejectionSuggestion: {
+      type: String,
+      default: null,
+    },
+    videoDurationSeconds: {
+      type: Number,
+      default: null,
+    },
+    videoResolution: {
+      type: String,
+      default: null,
+    },
+    videoCodec: {
+      type: String,
+      default: null,
     },
     outputType: {
       type: String,

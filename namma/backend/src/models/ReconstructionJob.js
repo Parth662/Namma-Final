@@ -16,7 +16,7 @@ const reconstructionJobSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['created', 'queued', 'processing', 'completed', 'failed'],
+      enum: ['created', 'queued', 'processing', 'completed', 'failed', 'rejected', 'cancelled'],
       default: 'queued',
       index: true,
     },
@@ -29,6 +29,14 @@ const reconstructionJobSchema = new mongoose.Schema(
     currentStage: {
       type: String,
       default: 'QUEUED',
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
+    },
+    rejectionSuggestion: {
+      type: String,
+      default: null,
     },
     videoPath: {
       type: String,
