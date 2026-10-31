@@ -130,7 +130,7 @@ if ((-not $nodeRunning) -and (-not $CheckOnly)) {
 
 # 5. Reconstruction Worker Check
 Write-Host "[5/6] Checking Reconstruction Worker... " -NoNewline
-$workerProc = Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match "reconstruction.worker.js" }
+$workerProc = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.Name -match "node" -and $_.CommandLine -match "reconstruction.worker.js" }
 if ($workerProc) {
     Write-Host "[ONLINE]" -ForegroundColor Green
 } else {

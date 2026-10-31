@@ -187,10 +187,6 @@ export const startReconstructionWorker = () => {
       } finally {
         clearTimeout(timeoutId);
       }
-        });
-
-        throw err;
-      }
     },
     {
       connection: redis,
