@@ -1,12 +1,20 @@
 import { Server } from 'socket.io';
+import { isOriginAllowed } from '../config/cors.js';
 
 let ioInstance = null;
 
 export const initSocketServer = (server) => {
   ioInstance = new Server(server, {
     cors: {
-      origin: '*',
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin)) {
+          callback(null, true);
+        } else {
+          callback(new Error(`Socket.IO CORS origin not allowed: ${origin}`));
+        }
+      },
       methods: ['GET', 'POST'],
+      credentials: true,
     },
   });
 

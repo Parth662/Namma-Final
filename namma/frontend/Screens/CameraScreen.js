@@ -23,40 +23,7 @@ import { getBackendBaseUrl, getAuthToken, setAuthToken, autoLoginSurveyor, proje
 let cachedAuthToken = null;
 
 const getBackendHost = () => {
-  let url = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-  // The Express API server (auth, projects, uploads) runs on port 5001.
-  // Port 5002 is the internal Python 3D reconstruction engine.
-  // If the URL accidentally points to :5002, auto-correct to :5001.
-  if (url) {
-    if (url.includes(':5002')) {
-      url = url.replace(':5002', ':5001');
-    }
-    return url;
-  }
-
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
-    const hostname = window.location.hostname || 'localhost';
-    return `http://${hostname}:5001`;
-  }
-  const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest2?.extra?.expoGo?.debuggerHost || Constants?.manifest?.debuggerHost;
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-      return `http://${ip}:5001`;
-    }
-  }
-  const scriptURL = NativeModules?.SourceCode?.scriptURL;
-  if (scriptURL) {
-    const address = scriptURL.split('://')[1]?.split('/')[0]?.split(':')[0];
-    if (address && address !== 'localhost' && address !== '127.0.0.1') {
-      return `http://${address}:5001`;
-    }
-  }
-  if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:5001';
-  }
-  return 'http://localhost:5001';
+  return getBackendBaseUrl();
 };
 
 export default function CameraScreen() {
@@ -929,10 +896,24 @@ export default function CameraScreen() {
     } catch (err) {
       console.error('Reconstruction initiation error:', err);
       setIsConverting(false);
+      const isNetworkError =
+        err.name === 'TypeError' ||
+        err.message?.toLowerCase().includes('fetch') ||
+        err.message?.toLowerCase().includes('network') ||
+        err.message?.toLowerCase().includes('failed to fetch') ||
+        err.message?.toLowerCase().includes('abort');
+
       setConversionError({
-        code: 'PIPELINE_INITIATION_FAILED',
-        reason: err.message || 'Could not communicate with the 3D reconstruction server.',
-        suggestion: `Please verify the backend server is running on ${backendHost}.`,
+        isNetworkError,
+        title: isNetworkError ? `Can't reach the server at ${backendHost}` : 'Reconstruction Initiation Failed',
+        url: backendHost,
+        code: isNetworkError ? 'NETWORK_ERROR' : 'PIPELINE_INITIATION_FAILED',
+        reason: isNetworkError
+          ? `Could not connect to the backend server at ${backendHost}. ${err.message || ''}`.trim()
+          : (err.message || 'Could not communicate with the 3D reconstruction server.'),
+        suggestion: isNetworkError
+          ? `Please ensure the Node API backend is running on ${backendHost} and firewall rules permit access.`
+          : `Please verify the backend server is running on ${backendHost}.`,
       });
     }
   };
@@ -1394,8 +1375,10 @@ export default function CameraScreen() {
           <View style={styles.modalOverlay}>
             <View style={[styles.conversionModalCard, { borderColor: '#ef4444' }]}>
               <View style={{ alignItems: 'center', marginBottom: 12 }}>
-                <Text style={{ fontSize: 32, marginBottom: 6 }}>⚠️</Text>
-                <Text style={styles.conversionTitle}>Reconstruction Quality Issue</Text>
+                <Text style={{ fontSize: 32, marginBottom: 6 }}>{conversionError?.isNetworkError ? '🌐' : '⚠️'}</Text>
+                <Text style={styles.conversionTitle}>
+                  {conversionError?.title || (conversionError?.isNetworkError ? `Can't reach the server at ${conversionError?.url || getBackendHost()}` : 'Reconstruction Quality Issue')}
+                </Text>
                 <Text style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, marginTop: 4 }}>
                   {conversionError?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY'}
                 </Text>
@@ -1405,7 +1388,7 @@ export default function CameraScreen() {
               </Text>
               <View style={{ backgroundColor: '#1e293b', padding: 12, borderRadius: 8, width: '100%', marginBottom: 16 }}>
                 <Text style={{ color: '#38bdf8', fontSize: 12, fontWeight: '700', marginBottom: 4 }}>
-                  💡 Photogrammetry Recommendation:
+                  {conversionError?.isNetworkError ? '🌐 Connection Help:' : '💡 Photogrammetry Recommendation:'}
                 </Text>
                 <Text style={{ color: '#94a3b8', fontSize: 12, lineHeight: 18 }}>
                   {conversionError?.suggestion}
@@ -1415,7 +1398,9 @@ export default function CameraScreen() {
                 style={{ backgroundColor: '#0284c7', paddingVertical: 12, borderRadius: 8, width: '100%', alignItems: 'center' }}
                 onPress={() => setConversionError(null)}
               >
-                <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '700' }}>Record New Footage</Text>
+                <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '700' }}>
+                  {conversionError?.isNetworkError ? 'Dismiss' : 'Record New Footage'}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>

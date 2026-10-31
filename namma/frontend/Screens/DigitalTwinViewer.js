@@ -13,28 +13,10 @@ import {
 } from 'react-native';
 import Constants from 'expo-constants';
 import { WebView } from 'react-native-webview';
+import { getBackendBaseUrl } from '../src/api/client';
 
 const getBackendHost = () => {
-  if (process.env.EXPO_PUBLIC_BACKEND_URL) {
-    return process.env.EXPO_PUBLIC_BACKEND_URL;
-  }
-  if (Platform.OS === 'web') return 'http://localhost:5001';
-  const hostUri = Constants?.expoConfig?.hostUri || Constants?.manifest2?.extra?.expoGo?.debuggerHost || Constants?.manifest?.debuggerHost;
-  if (hostUri) {
-    const ip = hostUri.split(':')[0];
-    if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
-      return `http://${ip}:5001`;
-    }
-  }
-  const scriptURL = NativeModules?.SourceCode?.scriptURL;
-  if (scriptURL) {
-    const address = scriptURL.split('://')[1]?.split('/')[0]?.split(':')[0];
-    if (address && address !== 'localhost' && address !== '127.0.0.1') {
-      return `http://${address}:5001`;
-    }
-  }
-  if (Platform.OS === 'android') return 'http://10.0.2.2:5001';
-  return 'http://localhost:5001';
+  return getBackendBaseUrl();
 };
 
 export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {

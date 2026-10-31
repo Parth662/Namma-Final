@@ -5,6 +5,7 @@ import morgan from 'morgan';
 import path from 'path';
 import mongoose from 'mongoose';
 import { env } from './config/environment.js';
+import { corsOptions } from './config/cors.js';
 import { getRedisClient } from './config/redis.js';
 import { pythonService } from './services/python.service.js';
 import authRoutes from './routes/auth.routes.js';
@@ -21,7 +22,7 @@ export const createApp = () => {
       crossOriginResourcePolicy: { policy: 'cross-origin' },
     })
   );
-  app.use(cors({ origin: '*', credentials: true }));
+  app.use(cors(corsOptions));
   app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
   app.use(express.json({ limit: '20mb' }));

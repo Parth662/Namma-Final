@@ -40,14 +40,14 @@ const startServer = async () => {
         console.warn(`[Server] Port ${currentPort} is in use (often macOS AirPlay on port 5000). Retrying on port ${currentPort + 1}...`);
         currentPort += 1;
         setTimeout(() => {
-          server.listen(currentPort, '0.0.0.0');
+          server.listen(currentPort, env.HOST);
         }, 200);
       } else {
         console.error('Server error:', err);
       }
     });
 
-    server.listen(currentPort, '0.0.0.0', () => {
+    server.listen(currentPort, env.HOST, () => {
       console.log('====================================================');
       console.log(' 3D Location Reconstruction & Digital Twin Backend');
       console.log(` Server running on http://localhost:${currentPort}`);

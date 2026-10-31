@@ -3,20 +3,27 @@ import { Platform } from 'react-native';
 let cachedToken = null;
 
 export const getBackendBaseUrl = () => {
-  let url = process.env.EXPO_PUBLIC_BACKEND_URL;
-
-  // The Express API server (auth, projects, uploads, navigation) runs on port 5001.
-  // Port 5002 is the internal Python photogrammetry engine.
-  if (url) {
-    if (url.includes(':5002')) {
-      url = url.replace(':5002', ':5001');
-    }
-    return url.replace(/\/+$/, '');
+  // Explicit override if provided
+  const overrideUrl = process.env.EXPO_PUBLIC_API_URL;
+  if (overrideUrl) {
+    let clean = overrideUrl.includes(':5002') ? overrideUrl.replace(':5002', ':5001') : overrideUrl;
+    return clean.replace(/\/+$/, '');
   }
 
-  if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location) {
+  // On Web: derive from the page's own host (e.g. localhost:8081 -> localhost:5001, 192.168.x.x:8081 -> 192.168.x.x:5001)
+  if (typeof window !== 'undefined' && window.location && window.location.hostname) {
+    const protocol = window.location.protocol || 'http:';
     const hostname = window.location.hostname || 'localhost';
-    return `http://${hostname}:5001`;
+    return `${protocol}//${hostname}:5001`;
+  }
+
+  // Native mobile fallback
+  let nativeUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
+  if (nativeUrl) {
+    if (nativeUrl.includes(':5002')) {
+      nativeUrl = nativeUrl.replace(':5002', ':5001');
+    }
+    return nativeUrl.replace(/\/+$/, '');
   }
 
   if (Platform.OS === 'android') {

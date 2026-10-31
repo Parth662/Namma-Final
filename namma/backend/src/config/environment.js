@@ -11,6 +11,7 @@ dotenv.config({ path: path.resolve(rootDir, '.env') });
 
 export const env = {
   NODE_ENV: process.env.NODE_ENV || 'development',
+  HOST: process.env.HOST || '0.0.0.0',
   PORT: parseInt(process.env.PORT, 10) || 5001,
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/digital_twin_db',
   JWT_SECRET: process.env.JWT_SECRET || 'super_secret_digital_twin_jwt_token_key_987654321',
