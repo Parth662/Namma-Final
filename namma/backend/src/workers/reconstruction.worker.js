@@ -194,7 +194,10 @@ export const startReconstructionWorker = () => {
     },
     {
       connection: redis,
-      concurrency: 1, // Photogrammetry is compute-intensive
+      concurrency: env.WORKER_CONCURRENCY || 1, // Photogrammetry is compute-intensive
+      lockDuration: 120000, // 2 minutes lock duration for heavy photogrammetry stages
+      lockRenewTime: 30000, // renew lock every 30s
+      maxStalledCount: 1,
     }
   );
 
@@ -222,11 +225,42 @@ export const startReconstructionWorker = () => {
   return worker;
 };
 
+export const recoverOrphanedJobs = async () => {
+  try {
+    const orphanedProjects = await Project.find({ status: 'processing' });
+    if (orphanedProjects.length > 0) {
+      console.warn(`[Recovery] Found ${orphanedProjects.length} orphaned processing project(s). Resetting to failed...`);
+      for (const proj of orphanedProjects) {
+        proj.status = 'failed';
+        proj.currentStage = 'FAILED';
+        proj.progress = 0;
+        await proj.save();
+
+        await ReconstructionJob.updateMany(
+          { projectId: proj._id, status: 'processing' },
+          {
+            status: 'failed',
+            currentStage: 'FAILED',
+            error: {
+              reason: 'Reconstruction interrupted due to server/worker restart.',
+              suggestion: 'Please restart the 3D reconstruction.',
+            },
+            completedAt: new Date(),
+          }
+        );
+      }
+    }
+  } catch (err) {
+    console.error('[Recovery] Error during orphaned job recovery:', err.message);
+  }
+};
+
 // Standalone execution support
 if (process.argv[1] && process.argv[1].endsWith('reconstruction.worker.js')) {
   (async () => {
     await connectDatabase();
     console.log('[Worker] Reconstruction worker process started');
+    await recoverOrphanedJobs();
     startReconstructionWorker();
   })();
 }

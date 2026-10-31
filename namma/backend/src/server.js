@@ -6,15 +6,16 @@ import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { closeRedisConnection } from './config/redis.js';
 import { initSocketServer } from './sockets/progress.socket.js';
 import { storageService } from './services/storage.service.js';
-import { startReconstructionWorker } from './workers/reconstruction.worker.js';
+import { startReconstructionWorker, recoverOrphanedJobs } from './workers/reconstruction.worker.js';
 
 const startServer = async () => {
   try {
     // 1. Ensure storage directories exist
     storageService.initDirectories();
 
-    // 2. Connect to MongoDB
+    // 2. Connect to MongoDB and recover any orphaned jobs from unexpected restarts
     await connectDatabase();
+    await recoverOrphanedJobs();
 
     // 3. Start BullMQ Photogrammetry Worker
     startReconstructionWorker();
