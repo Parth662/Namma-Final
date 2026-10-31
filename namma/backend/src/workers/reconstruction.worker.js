@@ -255,12 +255,21 @@ export const recoverOrphanedJobs = async () => {
   }
 };
 
-// Standalone execution support
+// Standalone execution support: npm run worker
 if (process.argv[1] && process.argv[1].endsWith('reconstruction.worker.js')) {
   (async () => {
     await connectDatabase();
-    console.log('[Worker] Reconstruction worker process started');
+    console.log(`[Worker] Dedicated reconstruction worker process started (concurrency: ${env.WORKER_CONCURRENCY || 1})`);
     await recoverOrphanedJobs();
-    startReconstructionWorker();
+    const worker = startReconstructionWorker();
+
+    const gracefulWorkerShutdown = async (sig) => {
+      console.log(`\n[Worker] Received ${sig}. Closing worker cleanly...`);
+      await worker.close();
+      process.exit(0);
+    };
+
+    process.on('SIGINT', () => gracefulWorkerShutdown('SIGINT'));
+    process.on('SIGTERM', () => gracefulWorkerShutdown('SIGTERM'));
   })();
 }

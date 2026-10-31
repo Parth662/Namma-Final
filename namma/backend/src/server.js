@@ -17,8 +17,13 @@ const startServer = async () => {
     await connectDatabase();
     await recoverOrphanedJobs();
 
-    // 3. Start BullMQ Photogrammetry Worker
-    startReconstructionWorker();
+    // 3. Optional inline worker (controlled via RUN_WORKER_IN_SERVER, default false in dedicated mode)
+    if (process.env.RUN_WORKER_IN_SERVER === 'true') {
+      console.log(' Starting Reconstruction Worker inline with API server...');
+      startReconstructionWorker();
+    } else {
+      console.log(' Dedicated Worker mode enabled. Launch standalone worker with: npm run worker');
+    }
 
     // 4. Create Express app
     const app = createApp();
