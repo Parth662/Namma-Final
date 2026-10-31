@@ -71,7 +71,7 @@
 - [x] **Step 4.5:** Export simplified wall segments for 2D mini-map.
 - [x] **Step 4.6:** Node endpoints: `GET /api/projects/:id/navgrid`, `GET /api/projects/:id/path?from=x,y,z&to=x,y,z` (and POI snapping).
 - [x] **Step 4.7:** Auto-run navigation generation at end of reconstruction & precompute for demo scene.
-- [ ] **Step 4.8:** Automated unit tests (synthetic box room, obstacle routing, unreachable target). Commit Phase 4.
+- [x] **Step 4.8:** Automated unit tests (synthetic box room, obstacle routing, unreachable target). Commit Phase 4.
 
 ---
 
