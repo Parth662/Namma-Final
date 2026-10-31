@@ -40,6 +40,54 @@ class InsufficientQualityException(Exception):
 
 BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+ACTIVE_PROCESSES = {}  # job_id -> list of subprocess.Popen
+
+def register_process(job_id, proc):
+    if not job_id:
+        return
+    if job_id not in ACTIVE_PROCESSES:
+        ACTIVE_PROCESSES[job_id] = []
+    ACTIVE_PROCESSES[job_id].append(proc)
+
+def unregister_process(job_id, proc):
+    if job_id in ACTIVE_PROCESSES:
+        try:
+            ACTIVE_PROCESSES[job_id].remove(proc)
+            if not ACTIVE_PROCESSES[job_id]:
+                del ACTIVE_PROCESSES[job_id]
+        except ValueError:
+            pass
+
+def kill_job_processes(job_id):
+    killed = 0
+    if job_id in ACTIVE_PROCESSES:
+        for proc in list(ACTIVE_PROCESSES[job_id]):
+            try:
+                proc.terminate()
+                proc.kill()
+                killed += 1
+            except Exception:
+                pass
+        del ACTIVE_PROCESSES[job_id]
+    print(f"[ProcessManager] Terminated {killed} processes for job {job_id}")
+    return killed
+
+def run_tracked_process(cmd, job_id=None, timeout=300):
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if job_id:
+        register_process(job_id, proc)
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+        class CompletedResult:
+            def __init__(self, out, err, code):
+                self.stdout = out
+                self.stderr = err
+                self.returncode = code
+        return CompletedResult(stdout, stderr, proc.returncode)
+    finally:
+        if job_id:
+            unregister_process(job_id, proc)
+
 def get_ffmpeg_bin():
     env_path = os.environ.get("FFMPEG_PATH")
     if env_path and os.path.exists(env_path):
@@ -52,7 +100,7 @@ def get_ffmpeg_bin():
         return gyan_path
     return "ffmpeg"
 
-def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max_image_size=None):
+def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max_image_size=None, job_id=None):
     """
     Extract high-quality frames from the uploaded video using ffmpeg directly.
     Bypasses fragile container duration metadata (e.g. browser WebM streams where duration is N/A).
@@ -75,7 +123,7 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
         "-q:v", "2",
         out_pattern
     ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    res = run_tracked_process(cmd, job_id=job_id, timeout=120)
     extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
 
     # Fallback to default frame rate if fps filter extracted too few frames
@@ -87,7 +135,7 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
             "-q:v", "2",
             out_pattern
         ]
-        subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        run_tracked_process(cmd_fallback, job_id=job_id, timeout=120)
         extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
 
     if len(extracted) < 4:
@@ -259,7 +307,7 @@ def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, m
 
     return accepted
 
-def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
+def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None):
     """
     Executes COLMAP Structure from Motion (Feature extraction, sequential matching, mapper)
     to estimate camera poses and reconstruct sparse 3D geometry.
@@ -307,7 +355,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
         "--SiftExtraction.peak_threshold", "0.003",
         "--SiftExtraction.edge_threshold", "10",
     ]
-    res = subprocess.run(cmd_extract, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+    res = run_tracked_process(cmd_extract, job_id=job_id, timeout=300)
     print(f"[COLMAP] feature_extractor returncode={res.returncode}")
     if res.returncode != 0:
         raise InsufficientQualityException(
@@ -325,7 +373,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
         "--SequentialMatching.overlap", "15",
         "--SequentialMatching.quadratic_overlap", "1",
     ]
-    res = subprocess.run(cmd_match, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+    res = run_tracked_process(cmd_match, job_id=job_id, timeout=300)
     print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
     if res.returncode == 0:
         matched = True
@@ -337,7 +385,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
             "--database_path", database_path,
             "--FeatureMatching.use_gpu", "0",
         ]
-        res = subprocess.run(cmd_match_ex, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        res = run_tracked_process(cmd_match_ex, job_id=job_id, timeout=300)
         print(f"[COLMAP] exhaustive_matcher returncode={res.returncode}")
         if res.returncode != 0:
             raise InsufficientQualityException(
@@ -358,7 +406,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
         "--Mapper.abs_pose_min_inlier_ratio", "0.1",
         "--Mapper.max_extra_param", "1",
     ]
-    res = subprocess.run(cmd_mapper, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+    res = run_tracked_process(cmd_mapper, job_id=job_id, timeout=600)
     print(f"[COLMAP] mapper returncode={res.returncode}")
     print(f"[COLMAP] mapper stderr tail: {res.stderr[-600:] if res.stderr else ''}")
 
@@ -404,7 +452,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
         "--output_path", ply_path,
         "--output_type", "PLY"
     ]
-    subprocess.run(cmd_convert_ply, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    run_tracked_process(cmd_convert_ply, job_id=job_id, timeout=120)
 
     txt_dir = os.path.join(workspace_dir, "txt")
     os.makedirs(txt_dir, exist_ok=True)
@@ -414,7 +462,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
         "--output_path", txt_dir,
         "--output_type", "TXT"
     ]
-    subprocess.run(cmd_convert_txt, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    run_tracked_process(cmd_convert_txt, job_id=job_id, timeout=120)
 
     # 5. Validate registered cameras and 3D points
     images_txt = os.path.join(txt_dir, "images.txt")
@@ -622,7 +670,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
 
     # Step 1: Extract frames from video
     report_stage("frames", 25, "Extracting and filtering high-quality frames", callback_url, project_id, job_id)
-    raw_frames = extract_frames(video_path, frames_dir)
+    raw_frames = extract_frames(video_path, frames_dir, job_id=job_id)
 
     # Step 1b: Early Rejection Pre-checks (brightness, blur, keypoints, camera motion)
     check_early_rejection(raw_frames)
@@ -634,7 +682,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
     report_stage("features", 45, "Extracting 2D feature points (SIFT)", callback_url, project_id, job_id)
     report_stage("matching", 60, "Matching feature descriptors across camera angles", callback_url, project_id, job_id)
     report_stage("sfm", 75, "Recovering 3D camera poses and sparse structure", callback_url, project_id, job_id)
-    ply_path, reg_count, _ = run_colmap_sfm(filtered_dir, colmap_dir)
+    ply_path, reg_count, _ = run_colmap_sfm(filtered_dir, colmap_dir, job_id=job_id)
 
     # Step 5 & 6: Dense geometry, mesh generation & GLB export
     report_stage("meshing", 85, "Reconstructing 3D surface mesh geometry", callback_url, project_id, job_id)

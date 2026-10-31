@@ -55,6 +55,22 @@ export const startReconstructionWorker = () => {
         });
       };
 
+      // Step 2.7: Active job timeout controller
+      const timeoutMs = env.JOB_TIMEOUT_MS || 600000;
+      const abortController = new AbortController();
+      let timedOut = false;
+
+      const timeoutId = setTimeout(async () => {
+        timedOut = true;
+        abortController.abort();
+        console.warn(`[Worker] Job ${jobId} timed out after ${timeoutMs}ms. Aborting engine request and subprocesses...`);
+        try {
+          await pythonService.cancelReconstruction({ jobId, projectId });
+        } catch (e) {
+          console.error('[Worker] Error sending cancellation during timeout:', e.message);
+        }
+      }, timeoutMs);
+
       try {
         // Section 19 stages
         await updateProgress('FRAME ANALYSIS', 15, 'Analyzing video and extracting quality frames');
@@ -68,7 +84,12 @@ export const startReconstructionWorker = () => {
           storageDir: env.STORAGE_DIR,
           processingDir: env.PROCESSING_DIR,
           callbackUrl,
+          signal: abortController.signal,
         });
+
+        if (timedOut) {
+          throw new Error(`JOB_TIMEOUT: Reconstruction process exceeded time limit of ${timeoutMs / 1000}s`);
+        }
 
         if (!response.success) {
           const isRejected = response.rejected || (response.error && (response.error.startsWith('REJECTED_') || response.error.startsWith('INSUFFICIENT_')));
@@ -163,6 +184,9 @@ export const startReconstructionWorker = () => {
         });
 
         throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
         });
 
         throw err;

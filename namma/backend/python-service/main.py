@@ -7,7 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-from pipeline import run_pipeline, InsufficientQualityException
+from pipeline import run_pipeline, InsufficientQualityException, kill_job_processes
 
 app = FastAPI(title="3D Photogrammetry & Digital Twin Reconstruction Service")
 
@@ -30,6 +30,21 @@ class ReconstructRequest(BaseModel):
     storageDir: Optional[str] = None
     processingDir: Optional[str] = None
     callbackUrl: Optional[str] = None
+
+class CancelRequest(BaseModel):
+    jobId: str
+    projectId: Optional[str] = None
+
+@app.post("/api/reconstruct/cancel")
+def cancel_reconstruction(req: CancelRequest):
+    print(f"[PythonEngine] Received cancellation request for job {req.jobId}")
+    killed_count = kill_job_processes(req.jobId)
+    return {
+        "success": True,
+        "cancelled": True,
+        "jobId": req.jobId,
+        "killedProcesses": killed_count,
+    }
 
 @app.get("/health")
 def health():

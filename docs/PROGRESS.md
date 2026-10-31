@@ -42,7 +42,7 @@
 - [x] **Step 2.4:** Standardize stages: `uploaded → queued → probing → frames → features → matching → sfm → meshing → export → completed` (+ `rejected`, `failed`, `cancelled`). Python engine reports stage progress to worker.
 - [x] **Step 2.5:** Socket.IO events per project room: `queue:position {position, total, etaSeconds}`, `job:stage {stage, progress, message}`, `job:completed`, `job:failed {reason}`.
 - [x] **Step 2.6:** Rolling ETA calculation: `(jobs ahead + remaining time) × rolling average of recent completed durations`. Persist average.
-- [ ] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
+- [x] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
 - [ ] **Step 2.8:** Retries: `attempts: 2` with exponential backoff for transient errors only; never for rejected videos.
 - [ ] **Step 2.9:** Stalled/restart recovery: tune `lockDuration`/stalled settings; on startup mark orphaned `processing` projects as `failed`.
 - [ ] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).

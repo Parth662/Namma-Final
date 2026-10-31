@@ -24,6 +24,7 @@ class PythonService {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params),
+        signal: params.signal,
       });
 
       const data = await res.json();
@@ -35,6 +36,21 @@ class PythonService {
         success: false,
         error: `Failed to contact Python 3D reconstruction engine at ${url}: ${error.message}`,
       };
+    }
+  }
+
+  async cancelReconstruction({ jobId, projectId }) {
+    const url = `${this.baseUrl}/api/reconstruct/cancel`;
+    console.log(`[PythonService] Requesting job cancellation at: ${url}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId, projectId }),
+      });
+      return await res.json();
+    } catch (error) {
+      return { success: false, error: error.message };
     }
   }
 }
