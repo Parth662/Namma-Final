@@ -202,8 +202,21 @@ export const startReconstructionWorker = () => {
     console.log(`[Worker] Job ${job.id} completed successfully`);
   });
 
-  worker.on('failed', (job, err) => {
-    console.log(`[Worker] Job ${job?.id} failed:`, err?.message);
+  worker.on('failed', async (job, err) => {
+    console.log(`[Worker] Job ${job?.id} failed on attempt ${job?.attemptsMade}/${job?.opts?.attempts}:`, err?.message);
+    if (job && job.attemptsMade >= (job.opts?.attempts || 2)) {
+      console.warn(`[Worker] Job ${job.id} exhausted all ${job.opts?.attempts} retry attempts.`);
+      const { projectId } = job.data || {};
+      if (projectId) {
+        await Project.findByIdAndUpdate(projectId, { status: 'failed', currentStage: 'FAILED' });
+        await ReconstructionJob.findOneAndUpdate({ projectId }, { status: 'failed', currentStage: 'FAILED' });
+        emitJobFailed(projectId, {
+          reason: `Job failed after ${job.attemptsMade} attempts: ${err?.message}`,
+          suggestion: 'Check video clarity and try again.',
+          rejected: false,
+        });
+      }
+    }
   });
 
   return worker;

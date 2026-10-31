@@ -43,7 +43,7 @@
 - [x] **Step 2.5:** Socket.IO events per project room: `queue:position {position, total, etaSeconds}`, `job:stage {stage, progress, message}`, `job:completed`, `job:failed {reason}`.
 - [x] **Step 2.6:** Rolling ETA calculation: `(jobs ahead + remaining time) × rolling average of recent completed durations`. Persist average.
 - [x] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
-- [ ] **Step 2.8:** Retries: `attempts: 2` with exponential backoff for transient errors only; never for rejected videos.
+- [x] **Step 2.8:** Retries: `attempts: 2` with exponential backoff for transient errors only; never for rejected videos.
 - [ ] **Step 2.9:** Stalled/restart recovery: tune `lockDuration`/stalled settings; on startup mark orphaned `processing` projects as `failed`.
 - [ ] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).
 - [ ] **Step 2.11:** Move worker to dedicated process (`npm run worker`) with `WORKER_CONCURRENCY` (default 1). Document running N copies and state laptop limitations.
