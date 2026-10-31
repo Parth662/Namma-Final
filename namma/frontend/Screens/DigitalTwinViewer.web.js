@@ -45,7 +45,28 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
   const cameraSphericalRef = useRef({ radius: 10, theta: Math.PI / 4, phi: Math.PI / 3.2 });
   const cameraTargetRef = useRef(new THREE.Vector3(0, 0, 0));
 
-  const resolvedProject = projectData || {};
+  const [resolvedProjectState, setResolvedProjectState] = useState(projectData || null);
+  const resolvedProject = resolvedProjectState || projectData || {};
+
+  const handleLoadDemo = async () => {
+    try {
+      setLoading(true);
+      setErrorState(null);
+      setLoadingStage('Loading offline pre-baked demo digital twin...');
+      const res = await fetch('http://localhost:5001/api/demo');
+      const json = await res.json();
+      if (json.success && json.data) {
+        setResolvedProjectState(json.data);
+      }
+    } catch (e) {
+      console.warn('Could not load demo project via API, falling back to local asset path:', e);
+      setResolvedProjectState({
+        name: 'Namma Space Innovation Quad (Offline Demo)',
+        modelUrl: '/storage/projects/sample_digital_twin/final/scene.glb',
+        isDemo: true,
+      });
+    }
+  };
 
   // Check if project has already failed before rendering 3D scene
   useEffect(() => {
@@ -210,7 +231,7 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
       window.removeEventListener('touchend', onPointerUp);
       renderer.dispose();
     };
-  }, [errorState]);
+  }, [errorState, resolvedProject.modelUrl]);
 
   const updateCameraPosition = () => {
     if (!cameraRef.current) return;
@@ -443,6 +464,12 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           </View>
           <View style={styles.headerRight}>
             <TouchableOpacity
+              style={styles.demoHeaderBtn}
+              onPress={handleLoadDemo}
+            >
+              <Text style={styles.demoHeaderBtnText}>🎮 Demo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
               style={[styles.arExportBtn, exportingGLB && styles.arExportBtnDisabled]}
               onPress={handleExportGLB}
               disabled={exportingGLB || loading || !!errorState}
@@ -504,7 +531,16 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                   <Text style={styles.errorTipText}>{errorState.suggestion}</Text>
                 </View>
                 <View style={styles.errorActions}>
-                  <TouchableOpacity style={styles.errorActionBtn} onPress={onClose}>
+                  <TouchableOpacity
+                    style={[styles.errorActionBtn, styles.demoActionBtn]}
+                    onPress={handleLoadDemo}
+                  >
+                    <Text style={styles.demoActionBtnText}>🎮 Try Demo Mode (Pre-baked 3D Scene)</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.errorActionBtn, { marginTop: 10, backgroundColor: '#334155' }]}
+                    onPress={onClose}
+                  >
                     <Text style={styles.errorActionBtnText}>Record New Video</Text>
                   </TouchableOpacity>
                 </View>
@@ -791,6 +827,30 @@ const styles = StyleSheet.create({
   errorActionBtnText: {
     color: '#ffffff',
     fontSize: 14,
+    fontWeight: '700',
+  },
+  demoActionBtn: {
+    backgroundColor: '#10b981',
+    borderWidth: 1,
+    borderColor: '#34d399',
+  },
+  demoActionBtnText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  demoHeaderBtn: {
+    backgroundColor: 'rgba(16, 185, 129, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.4)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    marginRight: 8,
+  },
+  demoHeaderBtnText: {
+    color: '#34d399',
+    fontSize: 13,
     fontWeight: '700',
   },
   toastContainer: {

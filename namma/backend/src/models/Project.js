@@ -92,6 +92,16 @@ const projectSchema = new mongoose.Schema(
       type: String,
       default: 'glb',
     },
+    isDemo: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    isPublic: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
     modelUrl: {
       type: String,
       default: null,

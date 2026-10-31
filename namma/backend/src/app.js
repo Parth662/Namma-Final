@@ -9,6 +9,7 @@ import { getRedisClient } from './config/redis.js';
 import { pythonService } from './services/python.service.js';
 import authRoutes from './routes/auth.routes.js';
 import projectRoutes from './routes/project.routes.js';
+import { getDemoProject } from './controllers/demo.controller.js';
 import { errorHandler, notFoundHandler } from './middleware/error.middleware.js';
 
 export const createApp = () => {
@@ -62,6 +63,7 @@ export const createApp = () => {
   });
 
   // API Routes
+  app.get('/api/demo', getDemoProject);
   app.use('/api/auth', authRoutes);
   app.use('/api/projects', projectRoutes);
 

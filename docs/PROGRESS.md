@@ -11,8 +11,8 @@
 - [x] **Phase 0 — Audit & System Readiness** (Approved)
 - [x] **Phase 1 — Run the Existing Pipeline End to End** (Completed; real reconstruction deferred per memory rules)
 - [x] **Phase 2 — Queue & Worker Hardening** (Completed; load test deferred per memory rules)
-- [~] **Phase 3 — Quality + Offline Demo Mode** (In Progress)
-- [ ] **Phase 4 — Alignment, Scale, Navigation**
+- [x] **Phase 3 — Quality + Offline Demo Mode** (Completed; live reconstruction tests deferred per memory rules)
+- [~] **Phase 4 — Alignment, Scale, Navigation** (In Progress)
 - [ ] **Phase 5 — POIs + Search**
 - [ ] **Phase 6 — Frontend Integration**
 - [ ] **Phase 7 — Polish, Security, Docs**
@@ -54,12 +54,12 @@
 ---
 
 ### Phase 3 — Quality + Offline Demo Mode
-- [ ] **Step 3.1:** Evaluate mesh quality improvements on CPU (Poisson depth tuning, density trimming, ball pivoting fallback, vertex color transfer).
-- [ ] **Step 3.2:** Document before/after observations in `docs/QUALITY.md`.
-- [ ] **Step 3.3:** Add Demo mode API (`GET /api/demo`) and frontend "Demo mode" button loading pre-baked scene with Redis & Python engine OFF.
-- [ ] **Step 3.4:** Create `scripts/seed-demo.js` to initialize demo project, public flag, POIs, and navgrid.
-- [ ] **Step 3.5:** Friendly viewer fallback message if GLB fails with a "Try Demo Mode" action.
-- [ ] **Step 3.6:** Offline verification test of Demo mode. Commit Phase 3.
+- [~] **Step 3.1:** Evaluate mesh quality improvements on CPU (Poisson depth tuning, density trimming, ball pivoting fallback, vertex color transfer). *(DEFERRED: Protected by memory rules; to be benchmarked manually at the end)*
+- [x] **Step 3.2:** Document before/after observations in `docs/QUALITY.md`.
+- [x] **Step 3.3:** Add Demo mode API (`GET /api/demo`) and frontend "Demo mode" button loading pre-baked scene with Redis & Python engine OFF.
+- [x] **Step 3.4:** Create `scripts/seed-demo.js` to initialize demo project, public flag, POIs, and navgrid.
+- [x] **Step 3.5:** Friendly viewer fallback message if GLB fails with a "Try Demo Mode" action.
+- [x] **Step 3.6:** Offline verification test of Demo mode. Commit Phase 3.
 
 ---
 

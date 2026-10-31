@@ -32,6 +32,16 @@ const runTests = async () => {
     assert.strictEqual(healthData.dependencies.mongodb, 'connected');
     console.log('✓ Health check passed');
 
+    // 1b. Demo Mode check (Step 3.3 & Step 3.6)
+    console.log('Testing GET /api/demo (Offline Demo Mode) ...');
+    const demoRes = await fetch(`${baseUrl}/api/demo`);
+    assert.strictEqual(demoRes.status, 200);
+    const demoData = await demoRes.json();
+    assert.strictEqual(demoData.success, true);
+    assert.strictEqual(demoData.isDemo, true);
+    assert(demoData.data.modelUrl.includes('scene.glb'));
+    console.log('✓ Demo endpoint GET /api/demo passed');
+
     // 2. Auth: Register
     console.log('Testing POST /api/auth/register ...');
     const registerPayload = {
