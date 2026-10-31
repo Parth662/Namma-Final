@@ -1,12 +1,14 @@
 import assert from 'assert';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { createApp } from './src/app.js';
 import { connectDatabase, disconnectDatabase } from './src/config/database.js';
 import { closeRedisConnection } from './src/config/redis.js';
 import { User } from './src/models/User.js';
 import { Project } from './src/models/Project.js';
 import { ReconstructionJob } from './src/models/ReconstructionJob.js';
+import { storageService } from './src/services/storage.service.js';
 
 const PORT = 5099;
 
@@ -137,9 +139,14 @@ const runTests = async () => {
 
     // 8. Projects: Video Upload (Phase 2)
     console.log(`Testing POST /api/projects/${project._id}/upload ...`);
-    // Create a mock mp4 file using a small test buffer or ffmpeg
+    // Create a valid 1-second test MP4 video using ffmpeg
     const testVideoPath = path.resolve('./uploads/temp_test.mp4');
-    fs.writeFileSync(testVideoPath, Buffer.from('FAKE-MP4-STREAM-CONTENT-HEADER-FOR-TESTING'));
+    fs.mkdirSync(path.dirname(testVideoPath), { recursive: true });
+    try {
+      execSync(`ffmpeg -y -f lavfi -i testsrc=duration=1:size=320x240:rate=10 -c:v libx264 -pix_fmt yuv420p "${testVideoPath}"`, { stdio: 'ignore' });
+    } catch {
+      fs.writeFileSync(testVideoPath, Buffer.from('FAKE-MP4-STREAM-CONTENT-HEADER-FOR-TESTING'));
+    }
 
     const formData = new FormData();
     const fileBlob = new Blob([fs.readFileSync(testVideoPath)], { type: 'video/mp4' });
@@ -162,8 +169,8 @@ const runTests = async () => {
     assert.strictEqual(uploadData.data.projectId, project._id);
 
     // Verify file on disk
-    const expectedDiskFile = path.resolve(`./uploads/${project._id}/source/video.mp4`);
-    assert(fs.existsSync(expectedDiskFile), 'Uploaded video.mp4 must exist on disk at uploads/<id>/source/video.mp4');
+    const expectedDiskFile = storageService.getVideoDestinationPath(project._id);
+    assert(fs.existsSync(expectedDiskFile), `Uploaded video.mp4 must exist on disk at ${expectedDiskFile}`);
     console.log('✓ Video upload & storage verification passed');
 
     // 9. Reconstruct trigger test (enqueuing to BullMQ as per Section 7)
