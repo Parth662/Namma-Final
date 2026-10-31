@@ -89,11 +89,11 @@
 - [x] **Step 6.1:** `src/api/client.js` with base URL from env, auth header, 401 handling.
 - [x] **Step 6.2:** Protect all new routes with existing JWT middleware (no changes to login/surveyor auto-registration).
 - [x] **Step 6.3:** Processing screen: Socket.IO stepper, progress percent, queue position, ETA, Cancel button.
-- [ ] **Step 6.4:** Viewer enhancements in `DigitalTwinViewer.web.js`: Orbit mode + First-Person Walkthrough (WASD + pointer lock) with nav grid collision + 2D mini-map.
-- [ ] **Step 6.5:** POI panel: search box → fly-to camera animation; click model to add/edit POI.
-- [ ] **Step 6.6:** Route visualization: glowing path line with moving marker, distance, walking ETA.
-- [ ] **Step 6.7:** Calibration UI: pick two points and enter real distance.
-- [ ] **Step 6.8:** Loading, empty, and error states across viewer. Commit Phase 6.
+- [x] **Step 6.4:** Viewer enhancements in `DigitalTwinViewer.web.js`: Orbit mode + First-Person Walkthrough (WASD + pointer lock) with nav grid collision + 2D mini-map.
+- [x] **Step 6.5:** POI panel: search box → fly-to camera animation; click model to add/edit POI.
+- [x] **Step 6.6:** Route visualization: glowing path line with moving marker, distance, walking ETA.
+- [x] **Step 6.7:** Calibration UI: pick two points and enter real distance.
+- [x] **Step 6.8:** Loading, empty, and error states across viewer. Commit Phase 6.
 
 ---
 
