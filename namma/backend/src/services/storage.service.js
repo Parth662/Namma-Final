@@ -20,7 +20,11 @@ class StorageService {
   }
 
   getProjectStoragePaths(projectId) {
-    const id = projectId.toString();
+    const rawId = projectId ? projectId.toString() : '';
+    const id = path.basename(rawId).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!id) {
+      throw new Error(`Invalid or unsafe project ID: ${rawId}`);
+    }
     const projectStorage = path.join(this.storageDir, 'projects', id);
     const sourceDir = path.join(projectStorage, 'source');
     const framesDir = path.join(projectStorage, 'frames');

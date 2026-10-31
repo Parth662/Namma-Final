@@ -1,6 +1,8 @@
 import { Project } from '../models/Project.js';
 import { ReconstructionJob } from '../models/ReconstructionJob.js';
+import { POI } from '../models/POI.js';
 import { storageService } from '../services/storage.service.js';
+import { navigationService } from '../services/navigation.service.js';
 
 export const createProject = async (req, res, next) => {
   try {
@@ -95,8 +97,10 @@ export const deleteProject = async (req, res, next) => {
     // Delete project files
     storageService.deleteProjectFiles(project._id);
 
-    // Delete jobs
+    // Delete associated jobs, POIs, and navigation cache
     await ReconstructionJob.deleteMany({ projectId: id });
+    await POI.deleteMany({ projectId: id });
+    navigationService.clearCache(id);
 
     // Delete project
     await Project.findByIdAndDelete(id);

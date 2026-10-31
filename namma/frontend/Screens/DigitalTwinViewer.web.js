@@ -328,6 +328,23 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
       dom.removeEventListener('mousemove', onPointerMove);
       window.removeEventListener('mouseup', onPointerUp);
       dom.removeEventListener('wheel', onWheel);
+
+      // Deep GPU memory disposal on unmount to prevent leaks
+      scene.traverse((child) => {
+        if (child.geometry) child.geometry.dispose();
+        if (child.material) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach((mat) => {
+              if (mat.map) mat.map.dispose();
+              mat.dispose();
+            });
+          } else {
+            if (child.material.map) child.material.map.dispose();
+            child.material.dispose();
+          }
+        }
+      });
+
       renderer.dispose();
     };
   }, [errorState, resolvedProject.modelUrl, viewMode, isAddingPOI, isCalibrating, activeRoute]);
