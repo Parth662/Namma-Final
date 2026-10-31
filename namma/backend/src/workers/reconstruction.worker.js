@@ -1,6 +1,10 @@
 import { Worker } from 'bullmq';
 import { getRedisClient } from '../config/redis.js';
-import { RECONSTRUCTION_QUEUE_NAME } from '../services/reconstruction.service.js';
+import {
+  RECONSTRUCTION_QUEUE_NAME,
+  updateWaitingJobsQueuePositions,
+  recordCompletedJobDuration,
+} from '../services/reconstruction.service.js';
 import { connectDatabase } from '../config/database.js';
 import { Project } from '../models/Project.js';
 import { ReconstructionJob } from '../models/ReconstructionJob.js';
@@ -22,6 +26,7 @@ export const startReconstructionWorker = () => {
     async (job) => {
       const { jobId, projectId, videoPath } = job.data;
       console.log(`[Worker] Started processing reconstruction job: ${jobId} for project: ${projectId}`);
+      await updateWaitingJobsQueuePositions();
 
       const project = await Project.findById(projectId);
       const reconJob = await ReconstructionJob.findById(jobId);
@@ -116,6 +121,10 @@ export const startReconstructionWorker = () => {
         reconJob.completedAt = new Date();
         reconJob.finalModelPath = response.finalModelPath;
         await reconJob.save();
+
+        const durationSec = (reconJob.completedAt.getTime() - (reconJob.startedAt || new Date()).getTime()) / 1000;
+        await recordCompletedJobDuration(durationSec);
+        await updateWaitingJobsQueuePositions();
 
         emitJobCompleted(projectId, {
           modelUrl: project.modelUrl,

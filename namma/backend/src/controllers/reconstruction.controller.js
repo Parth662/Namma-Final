@@ -63,7 +63,7 @@ export const startReconstruction = async (req, res, next) => {
     await project.save();
 
     // 5. Add job to BullMQ
-    await addReconstructionJobToQueue({
+    const { job: queuedJob, queueInfo } = await addReconstructionJobToQueue({
       jobId: job._id,
       projectId: project._id,
       userId: req.user._id,
@@ -76,6 +76,8 @@ export const startReconstruction = async (req, res, next) => {
       progress: 10,
       currentStage: 'QUEUED',
       message: 'Job enqueued for 3D reconstruction',
+      queuePosition: queueInfo.position,
+      etaSeconds: queueInfo.etaSeconds,
     });
 
     // 6. Return immediately as required by Section 7
@@ -84,6 +86,9 @@ export const startReconstruction = async (req, res, next) => {
       jobId: job._id,
       projectId: project._id,
       status: 'queued',
+      queuePosition: queueInfo.position,
+      totalQueued: queueInfo.total,
+      etaSeconds: queueInfo.etaSeconds,
     });
   } catch (error) {
     next(error);
