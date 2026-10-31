@@ -29,11 +29,18 @@ def get_ffmpeg_bin():
         return gyan_path
     return "ffmpeg"
 
-def extract_frames(video_path, output_dir, target_fps=2, max_frames=80):
+def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max_image_size=None):
     """
     Extract high-quality frames from the uploaded video using ffmpeg directly.
     Bypasses fragile container duration metadata (e.g. browser WebM streams where duration is N/A).
     """
+    if target_fps is None:
+        target_fps = float(os.environ.get("FRAME_FPS", 2))
+    if max_frames is None:
+        max_frames = int(os.environ.get("MAX_FRAMES", 60))
+    if max_image_size is None:
+        max_image_size = int(os.environ.get("MAX_IMAGE_SIZE", 1280))
+
     os.makedirs(output_dir, exist_ok=True)
     ffmpeg_bin = get_ffmpeg_bin()
 
@@ -41,7 +48,7 @@ def extract_frames(video_path, output_dir, target_fps=2, max_frames=80):
     cmd = [
         ffmpeg_bin, "-y",
         "-i", video_path,
-        "-vf", f"fps={target_fps},scale=1280:-1",
+        "-vf", f"fps={target_fps},scale={max_image_size}:-1",
         "-q:v", "2",
         out_pattern
     ]
@@ -501,7 +508,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
     thumbnail_path = os.path.join(preview_dir, "thumbnail.jpg")
 
     # Step 1: Extract frames from video
-    raw_frames = extract_frames(video_path, frames_dir, target_fps=3, max_frames=80)
+    raw_frames = extract_frames(video_path, frames_dir)
 
     # Step 2: Quality & Blur filtering
     filtered_frames = filter_quality_frames(raw_frames, filtered_dir)

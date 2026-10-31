@@ -36,7 +36,7 @@
 ---
 
 ### Phase 2 — Queue & Worker Hardening
-- [ ] **Step 2.1:** Configurable limits via env: `MAX_IMAGE_SIZE=1280`, `MAX_FRAMES=60`, `FRAME_FPS=2`, `MIN_KEYPOINTS`, `MIN_MOTION_SCORE`, `MAX_VIDEO_MB=500`, `MAX_VIDEO_SECONDS=180`.
+- [x] **Step 2.1:** Configurable limits via env: `MAX_IMAGE_SIZE=1280`, `MAX_FRAMES=60`, `FRAME_FPS=2`, `MIN_KEYPOINTS`, `MIN_MOTION_SCORE`, `MAX_VIDEO_MB=500`, `MAX_VIDEO_SECONDS=180`.
 - [ ] **Step 2.2:** Add `ffprobe` video validation on upload (type, duration, resolution, codec); reject invalid files.
 - [ ] **Step 2.3:** Add early rejection before COLMAP: motion check, brightness, Laplacian blur, keypoint density check on small subset. Project status `rejected` + friendly reason; never retry.
 - [ ] **Step 2.4:** Standardize stages: `uploaded → queued → probing → frames → features → matching → sfm → meshing → export → completed` (+ `rejected`, `failed`, `cancelled`). Python engine reports stage progress to worker.
