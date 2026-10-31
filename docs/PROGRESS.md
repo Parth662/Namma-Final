@@ -70,7 +70,7 @@
 - [x] **Step 4.4:** Pathfinding: 8-connected A* with path smoothing (string-pulling/Theta*). Return polyline, distance in meters, walking ETA.
 - [x] **Step 4.5:** Export simplified wall segments for 2D mini-map.
 - [x] **Step 4.6:** Node endpoints: `GET /api/projects/:id/navgrid`, `GET /api/projects/:id/path?from=x,y,z&to=x,y,z` (and POI snapping).
-- [ ] **Step 4.7:** Auto-run navigation generation at end of reconstruction & precompute for demo scene.
+- [x] **Step 4.7:** Auto-run navigation generation at end of reconstruction & precompute for demo scene.
 - [ ] **Step 4.8:** Automated unit tests (synthetic box room, obstacle routing, unreachable target). Commit Phase 4.
 
 ---

@@ -639,6 +639,47 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             "Please record the location again."
         )
 
+    # Step 5c: Generate 2D navigation occupancy grid and mini-map wall segments
+    navgrid_meta = {}
+    try:
+        from navigation.occupancy import generate_occupancy_grid
+        from navigation.minimap import extract_wall_segments
+
+        occ_grid = generate_occupancy_grid(tri_mesh, resolution=0.05, agent_radius=0.25)
+        wall_data = extract_wall_segments(occ_grid)
+
+        nav_dir = os.path.join(os.path.dirname(os.path.dirname(output_glb_path)), "navigation")
+        os.makedirs(nav_dir, exist_ok=True)
+        nav_file = os.path.join(nav_dir, "navgrid.json")
+
+        navgrid_payload = {
+            "resolution": occ_grid.resolution,
+            "origin": [occ_grid.min_x, occ_grid.min_z],
+            "width": occ_grid.width,
+            "height": occ_grid.height,
+            "bounds": {
+                "minX": occ_grid.min_x,
+                "maxX": occ_grid.max_x,
+                "minZ": occ_grid.min_z,
+                "maxZ": occ_grid.max_z,
+            },
+            "grid": occ_grid.grid.tolist(),
+            "wallSegments": wall_data.get("wallSegments", []),
+            "totalSegments": wall_data.get("totalSegments", 0),
+        }
+        with open(nav_file, "w") as f:
+            json.dump(navgrid_payload, f)
+
+        navgrid_meta = {
+            "navigationReady": True,
+            "resolution": occ_grid.resolution,
+            "gridDimensions": [occ_grid.width, occ_grid.height],
+            "totalWallSegments": wall_data.get("totalSegments", 0),
+        }
+        print(f"[Pipeline] Navigation grid generated and saved to {nav_file}")
+    except Exception as e:
+        print(f"[Pipeline] Navigation grid generation warning: {e}")
+
     vert_count = len(tri_mesh.vertices) if hasattr(tri_mesh, "vertices") else len(points)
     face_count = len(tri_mesh.faces) if hasattr(tri_mesh, "faces") else 0
 
@@ -657,7 +698,8 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             "maxY": float(max_b[1]),
             "maxZ": float(max_b[2]),
         },
-        "alignment": alignment_meta
+        "alignment": alignment_meta,
+        "navigation": navgrid_meta
     }
 
 def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, callback_url=None):
@@ -719,6 +761,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
             "fileSizeBytes": recon_stats["fileSizeBytes"],
             "reconstructionQuality": "COLMAP Structure-from-Motion & Multi-View Stereo",
             "scaleMeters": f"{recon_stats['boundingBox']['maxX'] - recon_stats['boundingBox']['minX']:.1f}m × {recon_stats['boundingBox']['maxY'] - recon_stats['boundingBox']['minY']:.1f}m × {recon_stats['boundingBox']['maxZ'] - recon_stats['boundingBox']['minZ']:.1f}m",
-            "alignment": recon_stats.get("alignment", {})
+            "alignment": recon_stats.get("alignment", {}),
+            "navigation": recon_stats.get("navigation", {})
         }
     }

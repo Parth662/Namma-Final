@@ -5,6 +5,7 @@
  */
 
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { createRequire } from 'module';
 
@@ -85,14 +86,27 @@ const seedDemo = async () => {
       demoProject.progress = 100;
       demoProject.modelUrl = '/storage/projects/sample_digital_twin/final/scene.glb';
       demoProject.thumbnailUrl = '/storage/projects/sample_digital_twin/preview/thumbnail.jpg';
+      demoProject.metersPerUnit = 1.0;
       await demoProject.save();
       console.log(`✓ Updated Demo Project (ID: ${demoProject._id})`);
+    }
+
+    // 3. Ensure Navigation Grid is in place for demo project
+    const demoNavSource = path.join(backendDir, 'storage/projects/sample_digital_twin/navigation/navgrid.json');
+    const demoProjNavDir = path.join(backendDir, 'storage/projects', demoProject._id.toString(), 'navigation');
+    fs.mkdirSync(demoProjNavDir, { recursive: true });
+    const demoProjNavDest = path.join(demoProjNavDir, 'navgrid.json');
+
+    if (fs.existsSync(demoNavSource)) {
+      fs.copyFileSync(demoNavSource, demoProjNavDest);
+      console.log(`✓ Seeded Navigation Grid for Demo Project at: ${demoProjNavDest}`);
     }
 
     console.log('\n======================================================');
     console.log(' DEMO SCENE SEEDED SUCCESSFULLY! ');
     console.log(` Project ID:   ${demoProject._id}`);
     console.log(` Access Route: GET /api/demo`);
+    console.log(` NavGrid Route: GET /api/projects/${demoProject._id}/navgrid`);
     console.log(` 3D Model:     ${demoProject.modelUrl}`);
     console.log('======================================================\n');
   } finally {
