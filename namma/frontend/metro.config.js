@@ -1,19 +1,25 @@
 const { getDefaultConfig } = require('expo/metro-config');
 const path = require('path');
 
-const config = getDefaultConfig(__dirname);
+const projectRoot = __dirname;
+const config = getDefaultConfig(projectRoot);
 
-// Limit watcher scope strictly to frontend directory
-config.watchFolders = [__dirname];
+// Explicitly anchor projectRoot and watchFolders to only frontend
+config.projectRoot = projectRoot;
+config.watchFolders = [projectRoot];
 
-// Block backend, storage, processing and tools from being scanned by Metro
+// Block git, backend, python venv, uploads, storage, tools, docs, and scripts
 config.resolver.blockList = [
+  /.*[\/\\]\.git[\/\\].*/,
   /.*[\/\\]backend[\/\\].*/,
-  /.*[\/\\]processing[\/\\].*/,
+  /.*[\/\\]python-service[\/\\].*/,
+  /.*[\/\\]venv.*[\/\\].*/,
   /.*[\/\\]storage[\/\\].*/,
   /.*[\/\\]uploads[\/\\].*/,
+  /.*[\/\\]outputs[\/\\].*/,
   /.*[\/\\]tools[\/\\].*/,
-  /.*[\/\\]venv.*[\/\\].*/,
+  /.*[\/\\]docs[\/\\].*/,
+  /.*[\/\\]scripts[\/\\].*/,
 ];
 
 module.exports = config;
