@@ -91,3 +91,4 @@ poiSchema.index(
 poiSchema.index({ projectId: 1, category: 1 });
 
 export const POI = mongoose.model('POI', poiSchema);
+

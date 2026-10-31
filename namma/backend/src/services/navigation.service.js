@@ -441,3 +441,4 @@ class TinyMinHeap {
 }
 
 export const navigationService = new NavigationService();
+

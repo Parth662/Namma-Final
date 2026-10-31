@@ -220,3 +220,4 @@ def align_mesh_or_points(geometry: Any) -> Tuple[Any, np.ndarray, Dict[str, Any]
             pass
 
         raise TypeError(f"Unsupported geometry type: {type(geometry)}")
+

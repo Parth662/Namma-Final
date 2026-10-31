@@ -203,3 +203,4 @@ def generate_occupancy_grid(
         resolution=resolution,
         raw_obstacles=raw_grid
     )
+

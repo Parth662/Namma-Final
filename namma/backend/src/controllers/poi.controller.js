@@ -284,3 +284,4 @@ export const deletePOI = async (req, res, next) => {
     next(error);
   }
 };
+

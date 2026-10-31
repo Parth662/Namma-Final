@@ -18,3 +18,4 @@ COPY . .
 EXPOSE 5002
 
 CMD ["python", "main.py"]
+

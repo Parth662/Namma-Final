@@ -266,3 +266,4 @@ def find_path(
         "walkingEtaSeconds": round(eta_seconds, 1),
         "walkingEtaFormatted": format_eta(eta_seconds),
     }
+

@@ -120,3 +120,4 @@ storage/
         └── navigation/
             └── navgrid.json        # 2D occupancy raster, wall segments, bounds
 ```
+

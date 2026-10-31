@@ -18,3 +18,4 @@ router.put('/:poiId', authenticate, updatePOI);
 router.delete('/:poiId', authenticate, deletePOI);
 
 export default router;
+

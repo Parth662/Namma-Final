@@ -57,3 +57,4 @@ In production cloud environments with dedicated compute nodes:
   # Using PM2 to manage 2 workers on a 16GB / 8-core instance
   pm2 start src/workers/reconstruction.worker.js -i 2 --name "recon-worker"
   ```
+

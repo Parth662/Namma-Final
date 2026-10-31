@@ -62,3 +62,4 @@ Reconstructing photorealistic, walk-through digital twins on consumer hardware r
 1. **Octree Depth:** Depth 8 provides an optimal balance for 8 GB RAM systems (~100,000 – 300,000 faces). Depth 9+ increases memory exponentially and is reserved for dedicated 16 GB+ GPU nodes.
 2. **Density Filter Threshold:** 0.05 (5th percentile) reliably removes ballooning artifacts without deleting valid thin walls.
 3. **Capture Guidance:** Walk slowly in an arc around the subject with 60%+ visual overlap between consecutive frames. Avoid pivoting in place without translation.
+

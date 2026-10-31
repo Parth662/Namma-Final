@@ -70,3 +70,4 @@ if __name__ == "__main__":
         out = os.path.join(base_dir, "storage", "projects", "sample_digital_twin", "navigation", "navgrid.json")
 
     generate_navigation_for_model(glb, out)
+
