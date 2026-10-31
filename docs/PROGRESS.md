@@ -31,14 +31,18 @@
 - [x] **Step 1.7:** Write `scripts/dev.ps1` (and `package.json` script) to orchestrate and health-check MongoDB, Redis, Python engine, Node API, Worker, and Expo Web frontend.
 - [x] **Step 1.8:** Run full pipeline with a real video: upload → queued → processing → completed → `scene.glb` visible in `DigitalTwinViewer.web.js`. *(Completed: Project "Surveyed Site 23:09:06" reconstructed end-to-end via COLMAP & Open3D)*
 - [x] **Step 1.9:** Record in `PROGRESS.md`: total time per stage, peak RAM, frames used, point count, mesh quality.
-  - Total pipeline time: ~41s
-  - Extracted frames: 37
-  - Registered camera poses: 36 (97.3% registration rate)
-  - 3D sparse points: 7,815
-  - Surface mesh: 46,647 triangles, 23,594 vertices
-  - GLB file size: 938,252 bytes
-  - Ground floor alignment: RANSAC aligned with 1,270 inliers (ground level at y=0)
-  - Navigation grid: 2D occupancy grid generated with 1,100 wall segments
+  - Video Source: Real indoor recording (`video.mp4`, 1920x1080 @ 30fps)
+  - Memory & Thread Rules Applied: Max 30 frames, 960 px scale, 2 CPU threads for COLMAP feature extraction, sequential matching, and incremental mapper.
+  - Total pipeline time: ~128.98s (2.15 minutes)
+  - Extracted frames: 30 frames (at 960x540) in 3.84s (Peak RAM: 42.3 MB)
+  - Quality Filtering: 30 high-quality frames kept (dark/black frames & low-feature frames dropped) in 2.88s (Peak RAM: 77.5 MB)
+  - COLMAP SfM: 18 cameras registered (inliers) in 112.69s (Peak RAM: 78.6 MB)
+  - 3D sparse points recovered: 910 points
+  - Surface mesh: 7,682 triangles, 3,962 vertices in 9.58s (Peak RAM: 172.6 MB)
+  - GLB file size: 156,552 bytes (152.9 KB)
+  - Ground floor alignment: RANSAC aligned to y=0 with 3,962 inliers
+  - Navigation grid: 2D occupancy grid generated and saved with wall segments
+  - Overall Peak Memory: 172.6 MB (well below host 8GB limit; zero crash, zero memory corruption)
 - [x] **Step 1.10:** Write `README.md` with exact clean-machine setup commands. Commit Phase 1.
 
 ---
