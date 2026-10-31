@@ -6,3 +6,4 @@ Includes floor plane alignment, 2D occupancy rasterization, A* pathfinding, and 
 from .alignment import fit_floor_plane_ransac, compute_alignment_matrix, align_mesh_or_points
 from .occupancy import OccupancyGrid, generate_occupancy_grid
 from .pathfinding import find_path, smooth_path
+from .minimap import extract_wall_segments, ramer_douglas_peucker_2d
