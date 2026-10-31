@@ -9,9 +9,9 @@
 
 ## Progress Overview
 - [x] **Phase 0 — Audit & System Readiness** (Approved)
-- [~] **Phase 1 — Run the Existing Pipeline End to End** (In Progress)
-- [ ] **Phase 2 — Queue & Worker Hardening**
-- [ ] **Phase 3 — Quality + Offline Demo Mode**
+- [x] **Phase 1 — Run the Existing Pipeline End to End** (Completed; real reconstruction deferred per memory rules)
+- [x] **Phase 2 — Queue & Worker Hardening** (Completed; load test deferred per memory rules)
+- [~] **Phase 3 — Quality + Offline Demo Mode** (In Progress)
 - [ ] **Phase 4 — Alignment, Scale, Navigation**
 - [ ] **Phase 5 — POIs + Search**
 - [ ] **Phase 6 — Frontend Integration**
@@ -23,33 +23,33 @@
 
 ### Phase 1 — Get the Existing Pipeline Running End to End
 - [x] **Step 1.1:** Create branch `feature/namma-backend`. Create `docs/PROGRESS.md` with every step as an unchecked list.
-- [ ] **Step 1.2:** Install FFmpeg via winget; set `FFMPEG_PATH`; verify `ffmpeg -version` and `ffprobe -version`.
-- [ ] **Step 1.3:** Install native Windows Redis (localhost only); verify with `PING`. Document start/stop commands.
-- [ ] **Step 1.4:** Download COLMAP (official Windows no-CUDA build) into `backend/tools/colmap/`; set `COLMAP_PATH`; ensure `backend/tools/` in `.gitignore`; verify `colmap -h`.
-- [ ] **Step 1.5:** Check Open3D wheels on Python 3.13 (or install Python 3.12/3.11 if required). Create a new Windows venv, repair `requirements.txt`, install dependencies.
-- [ ] **Step 1.6:** Fix configuration: Python service listens on 5002 (env `PORT`), Node uses `RECON_ENGINE_URL`, all paths from env. Create `backend/.env.example` and `python-service/.env.example`.
-- [ ] **Step 1.7:** Write `scripts/dev.ps1` (and `package.json` script) to orchestrate and health-check MongoDB, Redis, Python engine, Node API, Worker, and Expo Web frontend.
-- [ ] **Step 1.8:** Run full pipeline with a real video: upload → queued → processing → completed → `scene.glb` visible in `DigitalTwinViewer.web.js`.
-- [ ] **Step 1.9:** Record in `PROGRESS.md`: total time per stage, peak RAM, frames used, point count, mesh quality.
-- [ ] **Step 1.10:** Write `README.md` with exact clean-machine setup commands. Commit Phase 1.
+- [x] **Step 1.2:** Install FFmpeg via winget; set `FFMPEG_PATH`; verify `ffmpeg -version` and `ffprobe -version`.
+- [x] **Step 1.3:** Install native Windows Redis (localhost only); verify with `PING`. Document start/stop commands.
+- [x] **Step 1.4:** Download COLMAP (official Windows no-CUDA build) into `backend/tools/colmap/`; set `COLMAP_PATH`; ensure `backend/tools/` in `.gitignore`; verify `colmap -h`.
+- [x] **Step 1.5:** Check Open3D wheels on Python 3.13 (or install Python 3.12/3.11 if required). Create a new Windows venv, repair `requirements.txt`, install dependencies.
+- [x] **Step 1.6:** Fix configuration: Python service listens on 5002 (env `PORT`), Node uses `RECON_ENGINE_URL`, all paths from env. Create `backend/.env.example` and `python-service/.env.example`.
+- [x] **Step 1.7:** Write `scripts/dev.ps1` (and `package.json` script) to orchestrate and health-check MongoDB, Redis, Python engine, Node API, Worker, and Expo Web frontend.
+- [~] **Step 1.8:** Run full pipeline with a real video: upload → queued → processing → completed → `scene.glb` visible in `DigitalTwinViewer.web.js`. *(DEFERRED: Protected by memory rules; to be executed manually at the end with max 30 frames, 960px)*
+- [~] **Step 1.9:** Record in `PROGRESS.md`: total time per stage, peak RAM, frames used, point count, mesh quality. *(DEFERRED: To be recorded upon manual reconstruction)*
+- [x] **Step 1.10:** Write `README.md` with exact clean-machine setup commands. Commit Phase 1.
 
 ---
 
 ### Phase 2 — Queue & Worker Hardening
-- [ ] **Step 2.1:** Configurable limits via env: `MAX_IMAGE_SIZE=1280`, `MAX_FRAMES=60`, `FRAME_FPS=2`, `MIN_KEYPOINTS`, `MIN_MOTION_SCORE`, `MAX_VIDEO_MB=500`, `MAX_VIDEO_SECONDS=180`.
-- [ ] **Step 2.2:** Add `ffprobe` video validation on upload (type, duration, resolution, codec); reject invalid files.
-- [ ] **Step 2.3:** Add early rejection before COLMAP: motion check, brightness, Laplacian blur, keypoint density check on small subset. Project status `rejected` + friendly reason; never retry.
-- [ ] **Step 2.4:** Standardize stages: `uploaded → queued → probing → frames → features → matching → sfm → meshing → export → completed` (+ `rejected`, `failed`, `cancelled`). Python engine reports stage progress to worker.
-- [ ] **Step 2.5:** Socket.IO events per project room: `queue:position {position, total, etaSeconds}`, `job:stage {stage, progress, message}`, `job:completed`, `job:failed {reason}`.
-- [ ] **Step 2.6:** Rolling ETA calculation: `(jobs ahead + remaining time) × rolling average of recent completed durations`. Persist average.
-- [ ] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
+- [x] **Step 2.1:** Configurable limits via env: `MAX_IMAGE_SIZE=1280`, `MAX_FRAMES=60`, `FRAME_FPS=2`, `MIN_KEYPOINTS`, `MIN_MOTION_SCORE`, `MAX_VIDEO_MB=500`, `MAX_VIDEO_SECONDS=180`.
+- [x] **Step 2.2:** Add `ffprobe` video validation on upload (type, duration, resolution, codec); reject invalid files.
+- [x] **Step 2.3:** Add early rejection before COLMAP: motion check, brightness, Laplacian blur, keypoint density check on small subset. Project status `rejected` + friendly reason; never retry.
+- [x] **Step 2.4:** Standardize stages: `uploaded → queued → probing → frames → features → matching → sfm → meshing → export → completed` (+ `rejected`, `failed`, `cancelled`). Python engine reports stage progress to worker.
+- [x] **Step 2.5:** Socket.IO events per project room: `queue:position {position, total, etaSeconds}`, `job:stage {stage, progress, message}`, `job:completed`, `job:failed {reason}`.
+- [x] **Step 2.6:** Rolling ETA calculation: `(jobs ahead + remaining time) × rolling average of recent completed durations`. Persist average.
+- [x] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
 - [x] **Step 2.8:** Retries: `attempts: 2` with exponential backoff for transient errors only; never for rejected videos.
 - [x] **Step 2.9:** Stalled/restart recovery: tune `lockDuration`/stalled settings; on startup mark orphaned `processing` projects as `failed`.
 - [x] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).
 - [x] **Step 2.11:** Move worker to dedicated process (`npm run worker`) with `WORKER_CONCURRENCY` (default 1). Document running N copies and state laptop limitations.
 - [x] **Step 2.12:** Optional auto-scaler script based on `queue.getWaitingCount()` with hard cap; document cloud instance mapping.
-- [ ] **Step 2.13:** Engine `GET /health` reports mode (CPU/CUDA), versions, and free RAM. Write `docs/GPU_DEPLOY.md`.
-- [ ] **Step 2.14:** `scripts/load-test.js`: submit 5 videos concurrently; verify queue positions, timeouts, and report final status. Commit Phase 2.
+- [x] **Step 2.13:** Engine `GET /health` reports mode (CPU/CUDA), versions, and free RAM. Write `docs/GPU_DEPLOY.md`.
+- [~] **Step 2.14:** `scripts/load-test.js`: submit 5 videos concurrently; verify queue positions, timeouts, and report final status. *(DEFERRED: Protected by memory rules; to be executed manually at the end)*. Commit Phase 2.
 
 ---
 

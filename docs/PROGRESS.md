@@ -10,8 +10,8 @@
 ## Progress Overview
 - [x] **Phase 0 — Audit & System Readiness** (Approved)
 - [x] **Phase 1 — Run the Existing Pipeline End to End** (Completed; real reconstruction deferred per memory rules)
-- [~] **Phase 2 — Queue & Worker Hardening** (In Progress)
-- [ ] **Phase 3 — Quality + Offline Demo Mode**
+- [x] **Phase 2 — Queue & Worker Hardening** (Completed; load test deferred per memory rules)
+- [~] **Phase 3 — Quality + Offline Demo Mode** (In Progress)
 - [ ] **Phase 4 — Alignment, Scale, Navigation**
 - [ ] **Phase 5 — POIs + Search**
 - [ ] **Phase 6 — Frontend Integration**
@@ -48,8 +48,8 @@
 - [x] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).
 - [x] **Step 2.11:** Move worker to dedicated process (`npm run worker`) with `WORKER_CONCURRENCY` (default 1). Document running N copies and state laptop limitations.
 - [x] **Step 2.12:** Optional auto-scaler script based on `queue.getWaitingCount()` with hard cap; document cloud instance mapping.
-- [ ] **Step 2.13:** Engine `GET /health` reports mode (CPU/CUDA), versions, and free RAM. Write `docs/GPU_DEPLOY.md`.
-- [ ] **Step 2.14:** `scripts/load-test.js`: submit 5 videos concurrently; verify queue positions, timeouts, and report final status. Commit Phase 2.
+- [x] **Step 2.13:** Engine `GET /health` reports mode (CPU/CUDA), versions, and free RAM. Write `docs/GPU_DEPLOY.md`.
+- [~] **Step 2.14:** `scripts/load-test.js`: submit 5 videos concurrently; verify queue positions, timeouts, and report final status. *(DEFERRED: Protected by memory rules; to be executed manually at the end)*. Commit Phase 2.
 
 ---
 

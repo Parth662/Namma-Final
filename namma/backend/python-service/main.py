@@ -68,16 +68,35 @@ def health():
     )
 
     mem = psutil.virtual_memory()
+
+    cuda_available = False
+    try:
+        import cv2
+        if hasattr(cv2, 'cuda') and cv2.cuda.getCudaEnabledDeviceCount() > 0:
+            cuda_available = True
+    except Exception:
+        pass
+
+    import open3d
+    import cv2
+
     return {
         "status": "ok",
         "service": "python-3d-reconstruction-engine",
-        "mode": "CPU", # Intel UHD host, no CUDA
+        "mode": "CUDA" if cuda_available else "CPU",
         "port": int(os.environ.get("PORT", 5002)),
         "colmapAvailable": colmap_found,
         "ffmpegAvailable": ffmpeg_found,
+        "versions": {
+            "python": sys.version.split()[0],
+            "opencv": getattr(cv2, "__version__", "unknown"),
+            "open3d": getattr(open3d, "__version__", "unknown"),
+            "platform": sys.platform
+        },
         "memory": {
             "totalMB": round(mem.total / (1024 * 1024), 1),
             "availableMB": round(mem.available / (1024 * 1024), 1),
+            "freeMB": round(getattr(mem, "free", mem.available) / (1024 * 1024), 1),
             "percentUsed": mem.percent
         }
     }
