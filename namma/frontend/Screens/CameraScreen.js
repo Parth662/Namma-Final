@@ -17,6 +17,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import DigitalTwinViewer from './DigitalTwinViewer';
 import GeospatialMapScreen from './GeospatialMapScreen';
+import { io } from 'socket.io-client';
+import { getBackendBaseUrl, getAuthToken, setAuthToken, autoLoginSurveyor, projectsApi } from '../src/api/client';
 
 let cachedAuthToken = null;
 
@@ -79,6 +81,9 @@ export default function CameraScreen() {
   const [isConverting, setIsConverting] = useState(false);
   const [conversionStage, setConversionStage] = useState('INITIALIZING');
   const [conversionProgress, setConversionProgress] = useState(0);
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [queuePosition, setQueuePosition] = useState(null);
+  const [estimatedEta, setEstimatedEta] = useState(null);
   const [userTwinData, setUserTwinData] = useState(null);
   const [conversionError, setConversionError] = useState(null);
 
@@ -89,6 +94,8 @@ export default function CameraScreen() {
   const webMediaRecorderRef = useRef(null);
   const webRecordedChunksRef = useRef([]);
   const recordedVideoBlobRef = useRef(null);
+  const socketRef = useRef(null);
+  const pollIntervalRef = useRef(null);
 
   // Native permissions
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
@@ -605,11 +612,46 @@ export default function CameraScreen() {
     return sampleTwin;
   };
 
+  const cleanupMonitoring = () => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+  };
+
+  const handleCancelReconstruction = async () => {
+    cleanupMonitoring();
+    if (activeProjectId) {
+      try {
+        const backendHost = getBackendHost();
+        const token = cachedAuthToken;
+        await fetch(`${backendHost}/api/projects/${activeProjectId}/cancel`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } catch (err) {
+        console.warn('Cancel error:', err);
+      }
+    }
+    setIsConverting(false);
+    setActiveProjectId(null);
+    setConversionProgress(0);
+    setConversionStage('CANCELLED');
+    setQueuePosition(null);
+    setEstimatedEta(null);
+  };
+
   const handleStartConversion = async () => {
     setIsConverting(true);
     setConversionProgress(10);
     setConversionStage('PREPARING VIDEO FOR 3D RECONSTRUCTION...');
     setConversionError(null);
+    setQueuePosition(null);
+    setEstimatedEta(null);
 
     const hasBlob = !!recordedVideoBlobRef.current;
     const hasUri = !!recordedVideoUri;
@@ -690,6 +732,7 @@ export default function CameraScreen() {
         throw new Error(projData.error || `Failed to initialize project (HTTP ${projRes.status})`);
       }
       const projectId = projData.data._id;
+      setActiveProjectId(projectId);
 
       // 3. Upload raw video
       setConversionProgress(35);
@@ -766,8 +809,94 @@ export default function CameraScreen() {
       const reconData = await reconRes.json();
       if (!reconData.success) throw new Error(reconData.error || 'Failed to enqueue reconstruction');
 
-      // 5. Poll for real progress and validation
-      const pollInterval = setInterval(async () => {
+      // Helper to finalize digital twin and launch viewer
+      const handleReconSuccess = async () => {
+        cleanupMonitoring();
+        setConversionProgress(100);
+        setConversionStage('DIGITAL TWIN READY!');
+
+        try {
+          const modelRes = await fetch(`${backendHost}/api/projects/${projectId}/model`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const modelData = await modelRes.json();
+
+          setUserTwinData({
+            id: projectId,
+            name: projData.data.name,
+            status: 'completed',
+            modelUrl: modelData.model?.url
+              ? modelData.model.url.startsWith('http')
+                ? modelData.model.url
+                : `${backendHost}${modelData.model.url}`
+              : null,
+            thumbnailUrl: modelData.model?.thumbnail
+              ? modelData.model.thumbnail.startsWith('http')
+                ? modelData.model.thumbnail
+                : `${backendHost}${modelData.model.thumbnail}`
+              : null,
+            bounds: modelData.bounds,
+            metadata: modelData.metadata,
+            stats: {
+              triangles: modelData.metadata?.triangles?.toLocaleString() || '120,000',
+              vertices: modelData.metadata?.vertices?.toLocaleString() || '75,000',
+              pointCount: `${modelData.metadata?.points3D?.toLocaleString() || '180,000'} pts`,
+              cameraPoses: modelData.metadata?.registeredFrames || 18,
+              scaleMeters: modelData.metadata?.scaleMeters || 'Metric Scale',
+              reconstructionQuality: modelData.metadata?.reconstructionQuality || 'COLMAP SfM + Open3D MVS',
+            },
+          });
+          setIsConverting(false);
+          setShowViewer(true);
+        } catch (e) {
+          console.warn('Failed to load final model:', e);
+        }
+      };
+
+      // 5. Connect Socket.IO for real-time stage updates, queue position, and ETA
+      try {
+        const socket = io(backendHost, {
+          transports: ['websocket', 'polling'],
+          reconnectionAttempts: 5,
+        });
+        socketRef.current = socket;
+
+        socket.on('connect', () => {
+          socket.emit('subscribe:job', { projectId });
+        });
+
+        socket.on('job:stage', (payload) => {
+          if (!payload || (payload.projectId && payload.projectId !== projectId)) return;
+          if (payload.stage) setConversionStage(payload.message || payload.stage.toUpperCase());
+          if (typeof payload.progress === 'number') setConversionProgress(payload.progress);
+          if (payload.etaFormatted) setEstimatedEta(payload.etaFormatted);
+          if (payload.queuePosition !== undefined) setQueuePosition(payload.queuePosition);
+        });
+
+        socket.on('queue:position', (payload) => {
+          if (!payload || (payload.projectId && payload.projectId !== projectId)) return;
+          setQueuePosition(payload.position);
+        });
+
+        socket.on('job:completed', () => {
+          handleReconSuccess();
+        });
+
+        socket.on('job:failed', (payload) => {
+          cleanupMonitoring();
+          setIsConverting(false);
+          setConversionError({
+            code: payload?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY',
+            reason: payload?.reason || '3D reconstruction could not recover geometry from footage.',
+            suggestion: payload?.suggestion || 'Please record more overlapping angles with slower camera motion.',
+          });
+        });
+      } catch (sockErr) {
+        console.warn('[Socket.IO] Init warning:', sockErr);
+      }
+
+      // 6. Polling Fallback (in case WebSockets are blocked)
+      pollIntervalRef.current = setInterval(async () => {
         try {
           const statusRes = await fetch(`${backendHost}/api/projects/${projectId}/status`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -777,38 +906,15 @@ export default function CameraScreen() {
           if (statusData.status === 'processing' || statusData.status === 'queued') {
             setConversionProgress(Math.max(45, statusData.progress || 50));
             setConversionStage(statusData.currentStage || 'PROCESSING STRUCTURE FROM MOTION...');
+            if (statusData.queuePosition !== undefined) setQueuePosition(statusData.queuePosition);
+            if (statusData.estimatedRemainingSec) {
+              const sec = Math.round(statusData.estimatedRemainingSec);
+              setEstimatedEta(sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m ${sec % 60}s`);
+            }
           } else if (statusData.status === 'completed') {
-            clearInterval(pollInterval);
-            setConversionProgress(100);
-            setConversionStage('DIGITAL TWIN READY!');
-
-            // Fetch final photogrammetric model metadata
-            const modelRes = await fetch(`${backendHost}/api/projects/${projectId}/model`, {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            const modelData = await modelRes.json();
-
-            setUserTwinData({
-              id: projectId,
-              name: projData.data.name,
-              status: 'completed',
-              modelUrl: modelData.model?.url ? (modelData.model.url.startsWith('http') ? modelData.model.url : `${backendHost}${modelData.model.url}`) : null,
-              thumbnailUrl: modelData.model?.thumbnail ? (modelData.model.thumbnail.startsWith('http') ? modelData.model.thumbnail : `${backendHost}${modelData.model.thumbnail}`) : null,
-              bounds: modelData.bounds,
-              metadata: modelData.metadata,
-              stats: {
-                triangles: modelData.metadata?.triangles?.toLocaleString() || '120,000',
-                vertices: modelData.metadata?.vertices?.toLocaleString() || '75,000',
-                pointCount: `${modelData.metadata?.points3D?.toLocaleString() || '180,000'} pts`,
-                cameraPoses: modelData.metadata?.registeredFrames || 18,
-                scaleMeters: modelData.metadata?.scaleMeters || 'Metric Scale',
-                reconstructionQuality: modelData.metadata?.reconstructionQuality || 'COLMAP SfM + Open3D MVS',
-              },
-            });
-            setIsConverting(false);
-            setShowViewer(true);
+            handleReconSuccess();
           } else if (statusData.status === 'failed') {
-            clearInterval(pollInterval);
+            cleanupMonitoring();
             setIsConverting(false);
             setConversionError({
               code: statusData.error?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY',
@@ -1169,6 +1275,53 @@ export default function CameraScreen() {
                 </View>
               )}
 
+              {/* Standardized Stages Stepper */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginVertical: 10, justifyContent: 'center' }}>
+                {['PROBING', 'FRAMES', 'FEATURES', 'MATCHING', 'SFM', 'MESHING', 'EXPORT'].map((stg) => {
+                  const upperStage = (conversionStage || '').toUpperCase();
+                  const isCurrent = upperStage.includes(stg);
+                  const isPast = conversionProgress >= 95 || (stg === 'PROBING' && conversionProgress >= 20) || (stg === 'FRAMES' && conversionProgress >= 35) || (stg === 'FEATURES' && conversionProgress >= 50) || (stg === 'MATCHING' && conversionProgress >= 65) || (stg === 'SFM' && conversionProgress >= 78) || (stg === 'MESHING' && conversionProgress >= 88);
+                  const active = isCurrent || isPast;
+                  return (
+                    <View
+                      key={stg}
+                      style={{
+                        paddingHorizontal: 6,
+                        paddingVertical: 3,
+                        borderRadius: 4,
+                        backgroundColor: isCurrent ? 'rgba(14, 165, 233, 0.3)' : isPast ? 'rgba(16, 185, 129, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                        borderWidth: 1,
+                        borderColor: isCurrent ? '#0ea5e9' : isPast ? '#10b981' : 'rgba(255, 255, 255, 0.1)',
+                      }}
+                    >
+                      <Text style={{ fontSize: 9, fontWeight: '700', color: isCurrent ? '#38bdf8' : isPast ? '#34d399' : '#64748b' }}>
+                        {isPast && !isCurrent ? `✓ ${stg}` : stg}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
+
+              {/* Real-Time Queue Position & ETA Status Row */}
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingHorizontal: 4 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {queuePosition !== null && queuePosition > 0 ? (
+                    <Text style={{ color: '#f59e0b', fontSize: 11, fontWeight: '700' }}>
+                      📋 Queue Position: #{queuePosition}
+                    </Text>
+                  ) : (
+                    <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '700' }}>
+                      ⚡ Active Host Slot
+                    </Text>
+                  )}
+                </View>
+                {estimatedEta ? (
+                  <Text style={{ color: '#38bdf8', fontSize: 11, fontWeight: '700' }}>
+                    ⏱️ ETA: {estimatedEta}
+                  </Text>
+                ) : null}
+              </View>
+
               {/* Stage Badge & Progress Bar */}
               <View style={styles.stageBox}>
                 <Text style={styles.stageNameText} numberOfLines={1}>STAGE: {conversionStage}</Text>
@@ -1205,11 +1358,31 @@ export default function CameraScreen() {
                   </TouchableOpacity>
                 </View>
               ) : (
-                <View style={styles.conversionRunningRow}>
-                  <ActivityIndicator color="#0ea5e9" size="small" />
-                  <Text style={styles.conversionRunningText}>
-                    COLMAP Feature Extraction & Open3D Dense Synthesis Running...
-                  </Text>
+                <View>
+                  <View style={styles.conversionRunningRow}>
+                    <ActivityIndicator color="#0ea5e9" size="small" />
+                    <Text style={styles.conversionRunningText}>
+                      COLMAP Feature Extraction & Open3D Dense Synthesis Running...
+                    </Text>
+                  </View>
+                  {/* Cancel Reconstruction Button */}
+                  <TouchableOpacity
+                    style={{
+                      marginTop: 14,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      borderRadius: 6,
+                      borderWidth: 1,
+                      borderColor: 'rgba(239, 68, 68, 0.5)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      alignItems: 'center',
+                    }}
+                    onPress={handleCancelReconstruction}
+                  >
+                    <Text style={{ color: '#f87171', fontWeight: '700', fontSize: 12 }}>
+                      ✕ Cancel Reconstruction
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               )}
             </View>

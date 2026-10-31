@@ -88,7 +88,7 @@
 ### Phase 6 — Frontend Integration
 - [x] **Step 6.1:** `src/api/client.js` with base URL from env, auth header, 401 handling.
 - [x] **Step 6.2:** Protect all new routes with existing JWT middleware (no changes to login/surveyor auto-registration).
-- [ ] **Step 6.3:** Processing screen: Socket.IO stepper, progress percent, queue position, ETA, Cancel button.
+- [x] **Step 6.3:** Processing screen: Socket.IO stepper, progress percent, queue position, ETA, Cancel button.
 - [ ] **Step 6.4:** Viewer enhancements in `DigitalTwinViewer.web.js`: Orbit mode + First-Person Walkthrough (WASD + pointer lock) with nav grid collision + 2D mini-map.
 - [ ] **Step 6.5:** POI panel: search box → fly-to camera animation; click model to add/edit POI.
 - [ ] **Step 6.6:** Route visualization: glowing path line with moving marker, distance, walking ETA.
