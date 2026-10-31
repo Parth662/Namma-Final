@@ -198,3 +198,74 @@ export const getProjectModel = async (req, res, next) => {
     next(error);
   }
 };
+
+// Scale Calibration: POST /api/projects/:id/calibrate
+export const calibrateProject = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { p1, p2, realDistanceMeters, doorHeightFallback } = req.body;
+
+    const project = await Project.findOne({
+      _id: id,
+      $or: [{ userId: req.user._id }, { isDemo: true }],
+    });
+
+    if (!project) {
+      return res.status(404).json({
+        success: false,
+        error: 'Project not found',
+      });
+    }
+
+    let metersPerUnit = 1.0;
+    let calibratedDist = realDistanceMeters ? Number(realDistanceMeters) : 2.0;
+
+    if (Array.isArray(p1) && Array.isArray(p2) && p1.length === 3 && p2.length === 3) {
+      const dx = Number(p2[0]) - Number(p1[0]);
+      const dy = Number(p2[1]) - Number(p1[1]);
+      const dz = Number(p2[2]) - Number(p1[2]);
+      const modelDistance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+      if (modelDistance < 1e-4) {
+        return res.status(400).json({
+          success: false,
+          error: 'Calibration points must be distinct',
+        });
+      }
+
+      metersPerUnit = calibratedDist / modelDistance;
+      project.calibration = {
+        p1: p1.map(Number),
+        p2: p2.map(Number),
+        realDistanceMeters: calibratedDist,
+        calibratedAt: new Date(),
+      };
+    } else {
+      // Fallback: estimate using door opening height (~2.0m) or bounding box height
+      const bboxHeight = (project.boundingBox?.maxY || 2.0) - (project.boundingBox?.minY || 0.0);
+      const fallbackTarget = 2.0; // standard door height in meters
+      metersPerUnit = bboxHeight > 0.1 ? fallbackTarget / bboxHeight : 1.0;
+      calibratedDist = fallbackTarget;
+      project.calibration = {
+        p1: [0, 0, 0],
+        p2: [0, bboxHeight, 0],
+        realDistanceMeters: fallbackTarget,
+        calibratedAt: new Date(),
+      };
+    }
+
+    project.metersPerUnit = Number(metersPerUnit.toFixed(6));
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        projectId: project._id,
+        metersPerUnit: project.metersPerUnit,
+        calibration: project.calibration,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

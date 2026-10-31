@@ -6,6 +6,7 @@ import {
   deleteProject,
   getProjectMetadata,
   getProjectModel,
+  calibrateProject,
 } from '../controllers/project.controller.js';
 import { handleVideoUpload } from '../controllers/upload.controller.js';
 import {
@@ -43,5 +44,6 @@ router.get('/:id/status', authenticate, getReconstructionStatus);
 // Digital Twin Model & Metadata for 3D View (Section 18, 21)
 router.get('/:id/metadata', authenticate, getProjectMetadata);
 router.get('/:id/model', authenticate, getProjectModel);
+router.post('/:id/calibrate', authenticate, calibrateProject);
 
 export default router;

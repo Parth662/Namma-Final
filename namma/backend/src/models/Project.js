@@ -118,6 +118,16 @@ const projectSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.Mixed,
       default: {},
     },
+    metersPerUnit: {
+      type: Number,
+      default: 1.0,
+    },
+    calibration: {
+      p1: { type: [Number], default: null },
+      p2: { type: [Number], default: null },
+      realDistanceMeters: { type: Number, default: null },
+      calibratedAt: { type: Date, default: null },
+    },
   },
   {
     timestamps: true,
