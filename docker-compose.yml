@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:6.0
+    container_name: namma-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: namma-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  python-engine:
+    build:
+      context: ./namma/backend/python-service
+      dockerfile: Dockerfile
+    container_name: namma-python-engine
+    restart: unless-stopped
+    ports:
+      - "5002:5002"
+    environment:
+      - PORT=5002
+      - STORAGE_DIR=/app/storage
+      - PROCESSING_DIR=/app/processing
+      - MOCK_RECONSTRUCTION=${MOCK_RECONSTRUCTION:-0}
+    volumes:
+      - shared_storage:/app/storage
+      - ./namma/backend/storage/projects/sample_digital_twin:/app/storage/projects/sample_digital_twin:ro
+
+  api:
+    build:
+      context: ./namma/backend
+      dockerfile: Dockerfile
+    container_name: namma-api
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    environment:
+      - NODE_ENV=production
+      - PORT=5001
+      - MONGODB_URI=mongodb://mongodb:27017/digital_twin_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHON_SERVICE_URL=http://python-engine:5002
+      - UPLOAD_DIR=/app/uploads
+      - STORAGE_DIR=/app/storage
+      - PROCESSING_DIR=/app/processing
+    volumes:
+      - shared_storage:/app/storage
+      - ./namma/backend/storage/projects/sample_digital_twin:/app/storage/projects/sample_digital_twin:ro
+    depends_on:
+      - mongodb
+      - redis
+      - python-engine
+
+  worker:
+    build:
+      context: ./namma/backend
+      dockerfile: Dockerfile
+    container_name: namma-worker
+    command: ["npm", "run", "worker"]
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongodb:27017/digital_twin_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHON_SERVICE_URL=http://python-engine:5002
+      - UPLOAD_DIR=/app/uploads
+      - STORAGE_DIR=/app/storage
+      - PROCESSING_DIR=/app/processing
+    volumes:
+      - shared_storage:/app/storage
+      - ./namma/backend/storage/projects/sample_digital_twin:/app/storage/projects/sample_digital_twin:ro
+    depends_on:
+      - mongodb
+      - redis
+      - python-engine
+
+volumes:
+  mongo_data:
+  redis_data:
+  shared_storage:
