@@ -4,9 +4,32 @@ import glob
 import json
 import shutil
 import subprocess
+import urllib.request
 import numpy as np
 import cv2
 from PIL import Image
+
+def report_stage(stage, progress, message, callback_url=None, project_id=None, job_id=None):
+    print(f"[Stage] {stage.upper()} ({progress}%): {message}")
+    if callback_url and project_id:
+        try:
+            payload = json.dumps({
+                "projectId": str(project_id),
+                "jobId": str(job_id) if job_id else None,
+                "stage": stage,
+                "progress": progress,
+                "message": message
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                callback_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=2):
+                pass
+        except Exception:
+            pass
 
 class InsufficientQualityException(Exception):
     def __init__(self, code, reason, suggestion=None):
@@ -578,10 +601,12 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
         }
     }
 
-def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
+def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, callback_url=None):
     """
     Executes the complete video-to-3D photogrammetric digital twin reconstruction pipeline.
     """
+    report_stage("probing", 15, "Probing video structure and inspecting keyframes", callback_url, project_id, job_id)
+
     proj_proc_dir = os.path.join(processing_dir, str(project_id))
     frames_dir = os.path.join(proj_proc_dir, "raw_frames")
     filtered_dir = os.path.join(proj_proc_dir, "filtered_frames")
@@ -596,6 +621,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
     thumbnail_path = os.path.join(preview_dir, "thumbnail.jpg")
 
     # Step 1: Extract frames from video
+    report_stage("frames", 25, "Extracting and filtering high-quality frames", callback_url, project_id, job_id)
     raw_frames = extract_frames(video_path, frames_dir)
 
     # Step 1b: Early Rejection Pre-checks (brightness, blur, keypoints, camera motion)
@@ -605,12 +631,19 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
     filtered_frames = filter_quality_frames(raw_frames, filtered_dir)
 
     # Step 3 & 4: COLMAP SfM (feature matching, poses, sparse 3D geometry)
+    report_stage("features", 45, "Extracting 2D feature points (SIFT)", callback_url, project_id, job_id)
+    report_stage("matching", 60, "Matching feature descriptors across camera angles", callback_url, project_id, job_id)
+    report_stage("sfm", 75, "Recovering 3D camera poses and sparse structure", callback_url, project_id, job_id)
     ply_path, reg_count, _ = run_colmap_sfm(filtered_dir, colmap_dir)
 
     # Step 5 & 6: Dense geometry, mesh generation & GLB export
+    report_stage("meshing", 85, "Reconstructing 3D surface mesh geometry", callback_url, project_id, job_id)
+    report_stage("export", 95, "Exporting and optimizing GLB digital twin", callback_url, project_id, job_id)
     recon_stats = reconstruct_mesh_and_export_glb(
         ply_path, output_glb_path, thumbnail_path, registered_frames_count=reg_count
     )
+
+    report_stage("completed", 100, "Photorealistic 3D Digital Twin successfully generated", callback_url, project_id, job_id)
 
     return {
         "success": True,

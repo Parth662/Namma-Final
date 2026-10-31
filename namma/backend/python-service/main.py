@@ -29,6 +29,7 @@ class ReconstructRequest(BaseModel):
     videoPath: str
     storageDir: Optional[str] = None
     processingDir: Optional[str] = None
+    callbackUrl: Optional[str] = None
 
 @app.get("/health")
 def health():
@@ -105,6 +106,16 @@ def reconstruct(req: ReconstructRequest):
             if os.path.exists(src_thumb):
                 shutil.copyfile(src_thumb, dst_thumb)
 
+            from pipeline import report_stage
+            report_stage("probing", 15, "Probing video structure and inspecting keyframes", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("frames", 25, "Extracting and filtering high-quality frames", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("features", 45, "Extracting 2D feature points (SIFT)", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("matching", 60, "Matching feature descriptors across camera angles", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("sfm", 75, "Recovering 3D camera poses and sparse structure", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("meshing", 85, "Reconstructing 3D surface mesh geometry", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("export", 95, "Exporting and optimizing GLB digital twin", req.callbackUrl, req.projectId, req.jobId)
+            report_stage("completed", 100, "3D Digital Twin ready", req.callbackUrl, req.projectId, req.jobId)
+
             return {
                 "success": True,
                 "modelUrl": f"/storage/projects/{req.projectId}/final/scene.glb",
@@ -131,7 +142,8 @@ def reconstruct(req: ReconstructRequest):
             project_id=req.projectId,
             video_path=video_path,
             storage_dir=storage_dir,
-            processing_dir=processing_dir
+            processing_dir=processing_dir,
+            callback_url=req.callbackUrl
         )
         print(f"[PythonEngine] Completed successfully for project {req.projectId}")
         return result

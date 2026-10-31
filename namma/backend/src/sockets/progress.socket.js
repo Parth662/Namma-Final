@@ -47,3 +47,60 @@ export const emitProjectProgress = (projectId, payload) => {
     });
   }
 };
+
+export const emitJobStage = (projectId, { stage, progress, message }) => {
+  if (ioInstance) {
+    ioInstance.to(`project:${projectId}`).emit('job:stage', {
+      projectId,
+      stage,
+      progress,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+    // Backward compatibility with older clients
+    emitProjectProgress(projectId, { stage, progress, message, status: 'processing' });
+  }
+};
+
+export const emitQueuePosition = (projectId, { position, total, etaSeconds }) => {
+  if (ioInstance) {
+    ioInstance.to(`project:${projectId}`).emit('queue:position', {
+      projectId,
+      position,
+      total,
+      etaSeconds,
+      timestamp: new Date().toISOString(),
+    });
+    emitProjectProgress(projectId, { status: 'queued', position, total, etaSeconds });
+  }
+};
+
+export const emitJobCompleted = (projectId, payload = {}) => {
+  if (ioInstance) {
+    ioInstance.to(`project:${projectId}`).emit('job:completed', {
+      projectId,
+      ...payload,
+      timestamp: new Date().toISOString(),
+    });
+    emitProjectProgress(projectId, { status: 'completed', stage: 'completed', progress: 100, ...payload });
+  }
+};
+
+export const emitJobFailed = (projectId, { reason, suggestion, rejected = false }) => {
+  if (ioInstance) {
+    ioInstance.to(`project:${projectId}`).emit('job:failed', {
+      projectId,
+      reason,
+      suggestion,
+      rejected,
+      timestamp: new Date().toISOString(),
+    });
+    emitProjectProgress(projectId, {
+      status: rejected ? 'rejected' : 'failed',
+      stage: rejected ? 'rejected' : 'failed',
+      progress: 0,
+      reason,
+      suggestion,
+    });
+  }
+};

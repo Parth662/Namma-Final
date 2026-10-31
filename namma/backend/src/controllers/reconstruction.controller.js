@@ -4,7 +4,7 @@ import { Project } from '../models/Project.js';
 import { ReconstructionJob } from '../models/ReconstructionJob.js';
 import { addReconstructionJobToQueue } from '../services/reconstruction.service.js';
 import { storageService } from '../services/storage.service.js';
-import { emitProjectProgress } from '../sockets/progress.socket.js';
+import { emitProjectProgress, emitJobStage, emitQueuePosition } from '../sockets/progress.socket.js';
 
 export const startReconstruction = async (req, res, next) => {
   try {
@@ -138,5 +138,32 @@ export const getReconstructionStatus = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+export const handleInternalProgress = async (req, res, next) => {
+  try {
+    const { projectId, jobId, stage, progress, message } = req.body;
+    if (!projectId) {
+      return res.status(400).json({ success: false, error: 'projectId is required' });
+    }
+
+    const stageNormalized = (stage || 'processing').toLowerCase();
+    const update = { currentStage: stageNormalized, progress: Number(progress) || 0 };
+
+    if (stageNormalized === 'completed') update.status = 'completed';
+    else if (stageNormalized === 'rejected') update.status = 'rejected';
+    else if (stageNormalized === 'failed') update.status = 'failed';
+    else update.status = 'processing';
+
+    await Project.findByIdAndUpdate(projectId, update);
+    if (jobId) {
+      await ReconstructionJob.findByIdAndUpdate(jobId, update);
+    }
+
+    emitJobStage(projectId, { stage: stageNormalized, progress: update.progress, message: message || '' });
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    next(err);
   }
 };

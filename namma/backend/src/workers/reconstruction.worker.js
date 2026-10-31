@@ -4,7 +4,13 @@ import { RECONSTRUCTION_QUEUE_NAME } from '../services/reconstruction.service.js
 import { connectDatabase } from '../config/database.js';
 import { Project } from '../models/Project.js';
 import { ReconstructionJob } from '../models/ReconstructionJob.js';
-import { emitProjectProgress } from '../sockets/progress.socket.js';
+import {
+  emitProjectProgress,
+  emitJobStage,
+  emitJobCompleted,
+  emitJobFailed,
+  emitQueuePosition,
+} from '../sockets/progress.socket.js';
 import { pythonService } from '../services/python.service.js';
 import { env } from '../config/environment.js';
 
@@ -48,13 +54,15 @@ export const startReconstructionWorker = () => {
         // Section 19 stages
         await updateProgress('FRAME ANALYSIS', 15, 'Analyzing video and extracting quality frames');
 
-        // Call Python service with absolute storage directory so Express static server can serve the GLB
+        // Call Python service with absolute storage directory and webhook callback for stage updates
+        const callbackUrl = `http://127.0.0.1:${env.PORT}/api/projects/internal/progress`;
         const response = await pythonService.requestReconstruction({
           jobId,
           projectId,
           videoPath,
           storageDir: env.STORAGE_DIR,
           processingDir: env.PROCESSING_DIR,
+          callbackUrl,
         });
 
         if (!response.success) {
@@ -109,11 +117,11 @@ export const startReconstructionWorker = () => {
         reconJob.finalModelPath = response.finalModelPath;
         await reconJob.save();
 
-        emitProjectProgress(projectId, {
-          status: 'completed',
-          stage: 'DIGITAL TWIN READY',
-          progress: 100,
+        emitJobCompleted(projectId, {
           modelUrl: project.modelUrl,
+          thumbnailUrl: project.thumbnailUrl,
+          boundingBox: project.boundingBox,
+          metadata: project.reconstructionMetadata,
           message: 'Photorealistic 3D Digital Twin successfully generated!',
         });
 
@@ -139,12 +147,13 @@ export const startReconstructionWorker = () => {
         reconJob.completedAt = new Date();
         await reconJob.save();
 
-        emitProjectProgress(projectId, {
-          status: 'failed',
-          stage: 'FAILED',
-          progress: 0,
+        emitJobFailed(projectId, {
           reason: failureReason,
           suggestion,
+          rejected: false,
+        });
+
+        throw err;
         });
 
         throw err;
