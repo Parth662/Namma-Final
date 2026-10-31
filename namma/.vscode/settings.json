@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/backend/python-service/venv/bin/python",
+  "python.analysis.autoSearchPaths": true,
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/backend/python-service/venv/lib/python3.9/site-packages",
+    "${workspaceFolder}/backend/python-service"
+  ]
+}

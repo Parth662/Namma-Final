@@ -1,0 +1,44 @@
+{
+  "name": "digital-twin-3d-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Photorealistic Digital Twin & 3D Location Reconstruction Backend",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "worker": "node src/workers/reconstruction.worker.js",
+    "test": "node test_phase1_phase2.js",
+    "dev:stack": "powershell -ExecutionPolicy Bypass -File ../../scripts/dev.ps1",
+    "check:stack": "powershell -ExecutionPolicy Bypass -File ../../scripts/dev.ps1 -CheckOnly"
+  },
+  "keywords": [
+    "digital-twin",
+    "photogrammetry",
+    "colmap",
+    "open3d",
+    "express",
+    "bullmq",
+    "redis",
+    "threejs"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.41.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "helmet": "^8.0.0",
+    "ioredis": "^5.5.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.12.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
+  }
+}

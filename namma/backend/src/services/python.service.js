@@ -1,0 +1,42 @@
+import { env } from '../config/environment.js';
+
+class PythonService {
+  constructor() {
+    this.baseUrl = env.PYTHON_SERVICE_URL;
+  }
+
+  async checkHealth() {
+    try {
+      const res = await fetch(`${this.baseUrl}/health`, { method: 'GET' });
+      if (!res.ok) return { online: false, error: `Status ${res.status}` };
+      const data = await res.json();
+      return { online: true, ...data };
+    } catch (error) {
+      return { online: false, error: error.message };
+    }
+  }
+
+  async requestReconstruction(params) {
+    const url = `${this.baseUrl}/api/reconstruct`;
+    console.log(`[PythonService] Requesting 3D reconstruction at: ${url}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+
+      const data = await res.json();
+      return { status: res.status, ...data };
+    } catch (error) {
+      console.error(`[PythonService] Connection failed to ${url}:`, error.message);
+      return {
+        status: 503,
+        success: false,
+        error: `Failed to contact Python 3D reconstruction engine at ${url}: ${error.message}`,
+      };
+    }
+  }
+}
+
+export const pythonService = new PythonService();

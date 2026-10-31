@@ -1,0 +1,149 @@
+import { Worker } from 'bullmq';
+import { getRedisClient } from '../config/redis.js';
+import { RECONSTRUCTION_QUEUE_NAME } from '../services/reconstruction.service.js';
+import { connectDatabase } from '../config/database.js';
+import { Project } from '../models/Project.js';
+import { ReconstructionJob } from '../models/ReconstructionJob.js';
+import { emitProjectProgress } from '../sockets/progress.socket.js';
+import { pythonService } from '../services/python.service.js';
+import { env } from '../config/environment.js';
+
+export const startReconstructionWorker = () => {
+  const redis = getRedisClient();
+
+  const worker = new Worker(
+    RECONSTRUCTION_QUEUE_NAME,
+    async (job) => {
+      const { jobId, projectId, videoPath } = job.data;
+      console.log(`[Worker] Started processing reconstruction job: ${jobId} for project: ${projectId}`);
+
+      const project = await Project.findById(projectId);
+      const reconJob = await ReconstructionJob.findById(jobId);
+
+      if (!project || !reconJob) {
+        throw new Error(`Project or ReconstructionJob not found in database: ${projectId} / ${jobId}`);
+      }
+
+      const updateProgress = async (stage, progressNum, msg) => {
+        project.status = 'processing';
+        project.currentStage = stage;
+        project.progress = progressNum;
+        await project.save();
+
+        reconJob.status = 'processing';
+        reconJob.currentStage = stage;
+        reconJob.progress = progressNum;
+        if (!reconJob.startedAt) reconJob.startedAt = new Date();
+        await reconJob.save();
+
+        emitProjectProgress(projectId, {
+          status: 'processing',
+          stage,
+          progress: progressNum,
+          message: msg,
+        });
+      };
+
+      try {
+        // Section 19 stages
+        await updateProgress('FRAME ANALYSIS', 15, 'Analyzing video and extracting quality frames');
+
+        // Call Python service with absolute storage directory so Express static server can serve the GLB
+        const response = await pythonService.requestReconstruction({
+          jobId,
+          projectId,
+          videoPath,
+          storageDir: env.STORAGE_DIR,
+          processingDir: env.PROCESSING_DIR,
+        });
+
+        if (!response.success) {
+          const customErr = new Error(response.reason || response.error || 'Reconstruction failed in Python 3D engine');
+          customErr.code = response.error || 'INSUFFICIENT_RECONSTRUCTION_QUALITY';
+          customErr.suggestion = response.suggestion || 'Record the area again while moving slowly with steady overlapping camera angles.';
+          throw customErr;
+        }
+
+        // Finalize completed model
+        project.status = 'completed';
+        project.progress = 100;
+        project.currentStage = 'DIGITAL TWIN READY';
+        project.modelUrl = response.modelUrl || `/storage/projects/${projectId}/final/scene.glb`;
+        project.thumbnailUrl = response.thumbnailUrl || `/storage/projects/${projectId}/preview/thumbnail.jpg`;
+        if (response.boundingBox) project.boundingBox = response.boundingBox;
+        if (response.metadata) project.reconstructionMetadata = response.metadata;
+        await project.save();
+
+        reconJob.status = 'completed';
+        reconJob.progress = 100;
+        reconJob.currentStage = 'DIGITAL TWIN READY';
+        reconJob.completedAt = new Date();
+        reconJob.finalModelPath = response.finalModelPath;
+        await reconJob.save();
+
+        emitProjectProgress(projectId, {
+          status: 'completed',
+          stage: 'DIGITAL TWIN READY',
+          progress: 100,
+          modelUrl: project.modelUrl,
+          message: 'Photorealistic 3D Digital Twin successfully generated!',
+        });
+
+        return { success: true };
+      } catch (err) {
+        console.error(`[Worker] Error processing job ${jobId}:`, err);
+
+        const failureReason = err.message || 'Photogrammetry pipeline encountered an error';
+        const suggestion = err.suggestion || 'Record the area again while moving slowly with steady overlapping camera angles.';
+
+        project.status = 'failed';
+        project.currentStage = 'FAILED';
+        project.progress = 0;
+        await project.save();
+
+        reconJob.status = 'failed';
+        reconJob.currentStage = 'FAILED';
+        reconJob.error = {
+          reason: failureReason,
+          suggestion,
+          rawError: err.toString(),
+        };
+        reconJob.completedAt = new Date();
+        await reconJob.save();
+
+        emitProjectProgress(projectId, {
+          status: 'failed',
+          stage: 'FAILED',
+          progress: 0,
+          reason: failureReason,
+          suggestion,
+        });
+
+        throw err;
+      }
+    },
+    {
+      connection: redis,
+      concurrency: 1, // Photogrammetry is compute-intensive
+    }
+  );
+
+  worker.on('completed', (job) => {
+    console.log(`[Worker] Job ${job.id} completed successfully`);
+  });
+
+  worker.on('failed', (job, err) => {
+    console.log(`[Worker] Job ${job?.id} failed:`, err?.message);
+  });
+
+  return worker;
+};
+
+// Standalone execution support
+if (process.argv[1] && process.argv[1].endsWith('reconstruction.worker.js')) {
+  (async () => {
+    await connectDatabase();
+    console.log('[Worker] Reconstruction worker process started');
+    startReconstructionWorker();
+  })();
+}

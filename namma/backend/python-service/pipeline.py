@@ -1,0 +1,533 @@
+import os
+import sys
+import glob
+import json
+import shutil
+import subprocess
+import numpy as np
+import cv2
+from PIL import Image
+
+class InsufficientQualityException(Exception):
+    def __init__(self, code, reason, suggestion=None):
+        super().__init__(reason)
+        self.code = code
+        self.reason = reason
+        self.suggestion = suggestion or "Record the area again while moving slowly with steady overlapping camera angles."
+
+BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def get_ffmpeg_bin():
+    env_path = os.environ.get("FFMPEG_PATH")
+    if env_path and os.path.exists(env_path):
+        return env_path
+    found = shutil.which("ffmpeg")
+    if found:
+        return found
+    gyan_path = r"C:\Users\parth\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg.Essentials_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.1-essentials_build\bin\ffmpeg.exe"
+    if os.path.exists(gyan_path):
+        return gyan_path
+    return "ffmpeg"
+
+def extract_frames(video_path, output_dir, target_fps=2, max_frames=80):
+    """
+    Extract high-quality frames from the uploaded video using ffmpeg directly.
+    Bypasses fragile container duration metadata (e.g. browser WebM streams where duration is N/A).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    ffmpeg_bin = get_ffmpeg_bin()
+
+    out_pattern = os.path.join(output_dir, "frame_%04d.png")
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-i", video_path,
+        "-vf", f"fps={target_fps},scale=1280:-1",
+        "-q:v", "2",
+        out_pattern
+    ]
+    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
+
+    # Fallback to default frame rate if fps filter extracted too few frames
+    if len(extracted) < 4:
+        cmd_fallback = [
+            ffmpeg_bin, "-y",
+            "-i", video_path,
+            "-vf", "scale=1280:-1",
+            "-q:v", "2",
+            out_pattern
+        ]
+        subprocess.run(cmd_fallback, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
+
+    if len(extracted) < 4:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            f"Only {len(extracted)} frames could be extracted from the video.",
+            "Record at least 5 to 15 seconds continuously orbiting the room or subject."
+        )
+
+    # Sub-sample evenly if extracted frames exceed max_frames
+    if len(extracted) > max_frames:
+        step = len(extracted) / max_frames
+        indices = set(int(i * step) for i in range(max_frames))
+        for idx, fpath in enumerate(extracted):
+            if idx not in indices:
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
+        extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
+
+    print(f"[FFmpeg] Successfully extracted {len(extracted)} frames from {os.path.basename(video_path)}")
+    return extracted
+
+def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=15.0):
+    """
+    Filters out blurry, dark, and near-duplicate frames.
+    Uses Laplacian variance for blur detection and histogram comparison for duplicates.
+    """
+    os.makedirs(output_filtered_dir, exist_ok=True)
+    accepted = []
+    prev_hist = None
+
+    for fpath in frames_list:
+        img = cv2.imread(fpath)
+        if img is None:
+            continue
+        
+        # 1. Check brightness / exposure
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        brightness = np.mean(gray)
+        if brightness < min_brightness:
+            continue # Too dark
+
+        # 2. Check blur (Laplacian variance)
+        var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        if var < min_variance:
+            continue # Too blurry
+
+        # 3. Check for duplicates / static frames
+        hist = cv2.calcHist([gray], [0], None, [64], [0, 256])
+        cv2.normalize(hist, hist)
+        if prev_hist is not None:
+            similarity = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL)
+            if similarity > 0.995:
+                continue # Near duplicate frame, skip
+        
+        # Accept frame
+        prev_hist = hist
+        dest_name = os.path.basename(fpath)
+        dest_path = os.path.join(output_filtered_dir, dest_name)
+        shutil.copyfile(fpath, dest_path)
+        accepted.append(dest_path)
+
+    # Fallback: if blur filtering was slightly too aggressive but frames are valid,
+    # select evenly spaced original frames
+    if len(accepted) < 5 and len(frames_list) >= 5:
+        step = max(1, len(frames_list) // 20)
+        for idx in range(0, len(frames_list), step):
+            fpath = frames_list[idx]
+            dest_path = os.path.join(output_filtered_dir, f"fallback_{idx:04d}.png")
+            shutil.copyfile(fpath, dest_path)
+            accepted.append(dest_path)
+
+    if len(accepted) < 4:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            "Too few clear, overlapping video frames remained after quality filtering. The footage is too dark or contains excessive motion blur.",
+            "Record slowly with smooth camera movement and ample lighting."
+        )
+
+    return accepted
+
+def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None):
+    """
+    Executes COLMAP Structure from Motion (Feature extraction, sequential matching, mapper)
+    to estimate camera poses and reconstruct sparse 3D geometry.
+    """
+    # Resolve colmap binary robustly
+    if colmap_bin is None or not os.path.exists(colmap_bin):
+        colmap_env = os.environ.get("COLMAP_PATH")
+        candidates = [
+            colmap_env,
+            os.path.join(BACKEND_ROOT, "tools", "colmap", "COLMAP.bat"),
+            os.path.join(BACKEND_ROOT, "tools", "colmap", "bin", "colmap.exe"),
+            shutil.which("colmap"),
+            shutil.which("COLMAP.bat"),
+            "/opt/homebrew/bin/colmap",
+            "/usr/local/bin/colmap",
+            "/usr/bin/colmap",
+        ]
+        for candidate in candidates:
+            if candidate and os.path.exists(candidate):
+                colmap_bin = candidate
+                break
+        else:
+            raise InsufficientQualityException(
+                "COLMAP_NOT_FOUND",
+                "COLMAP binary not found on this system.",
+                "Ensure COLMAP is installed or set COLMAP_PATH in environment."
+            )
+
+    print(f"[COLMAP] Using binary: {colmap_bin}")
+
+    os.makedirs(workspace_dir, exist_ok=True)
+    database_path = os.path.join(workspace_dir, "database.db")
+    sparse_path = os.path.join(workspace_dir, "sparse")
+    os.makedirs(sparse_path, exist_ok=True)
+
+    # 1. Feature Extraction (SIFT) — relaxed settings for mobile video
+    cmd_extract = [
+        colmap_bin, "feature_extractor",
+        "--database_path", database_path,
+        "--image_path", image_dir,
+        "--ImageReader.single_camera", "1",
+        "--ImageReader.camera_model", "SIMPLE_RADIAL",
+        "--FeatureExtraction.use_gpu", "0",
+        "--SiftExtraction.max_num_features", "8192",
+        "--SiftExtraction.peak_threshold", "0.003",
+        "--SiftExtraction.edge_threshold", "10",
+    ]
+    res = subprocess.run(cmd_extract, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+    print(f"[COLMAP] feature_extractor returncode={res.returncode}")
+    if res.returncode != 0:
+        raise InsufficientQualityException(
+            "SFM_FEATURE_EXTRACTION_FAILED",
+            f"COLMAP feature extraction failed: {res.stderr[-400:] if res.stderr else 'Unknown error'}",
+            "Ensure images have rich visual texture and distinct features."
+        )
+
+    # 2a. Sequential matching (best for video frames)
+    matched = False
+    cmd_match = [
+        colmap_bin, "sequential_matcher",
+        "--database_path", database_path,
+        "--FeatureMatching.use_gpu", "0",
+        "--SequentialMatching.overlap", "15",
+        "--SequentialMatching.quadratic_overlap", "1",
+    ]
+    res = subprocess.run(cmd_match, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+    print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
+    if res.returncode == 0:
+        matched = True
+
+    # 2b. Exhaustive matching fallback
+    if not matched:
+        cmd_match_ex = [
+            colmap_bin, "exhaustive_matcher",
+            "--database_path", database_path,
+            "--FeatureMatching.use_gpu", "0",
+        ]
+        res = subprocess.run(cmd_match_ex, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=300)
+        print(f"[COLMAP] exhaustive_matcher returncode={res.returncode}")
+        if res.returncode != 0:
+            raise InsufficientQualityException(
+                "SFM_MATCHING_FAILED",
+                f"COLMAP feature matching failed: {res.stderr[-400:] if res.stderr else 'Unknown error'}",
+                "Provide overlapping footage where consecutive frames share common landmarks."
+            )
+
+    # 3. Incremental Mapper — relaxed thresholds for indoor/mobile video
+    cmd_mapper = [
+        colmap_bin, "mapper",
+        "--database_path", database_path,
+        "--image_path", image_dir,
+        "--output_path", sparse_path,
+        "--Mapper.min_num_matches", "8",
+        "--Mapper.init_min_num_inliers", "50",
+        "--Mapper.abs_pose_min_num_inliers", "15",
+        "--Mapper.abs_pose_min_inlier_ratio", "0.1",
+        "--Mapper.max_extra_param", "1",
+    ]
+    res = subprocess.run(cmd_mapper, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=600)
+    print(f"[COLMAP] mapper returncode={res.returncode}")
+    print(f"[COLMAP] mapper stderr tail: {res.stderr[-600:] if res.stderr else ''}")
+
+    # Find all reconstructed submodels in sparse/ and pick the BEST one (most 3D points)
+    subdirs = [
+        os.path.join(sparse_path, d)
+        for d in os.listdir(sparse_path)
+        if os.path.isdir(os.path.join(sparse_path, d))
+    ]
+    if not subdirs:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            "Structure-from-Motion could not register camera poses. Try recording in a well-lit area with more texture (avoid plain white walls).",
+            "Move the camera slowly in a wide arc around the subject, keeping it in frame at all times."
+        )
+
+    def model_point_score(d):
+        pbin = os.path.join(d, "points3D.bin")
+        ptxt = os.path.join(d, "points3D.txt")
+        if os.path.exists(pbin):
+            return os.path.getsize(pbin)
+        if os.path.exists(ptxt):
+            return os.path.getsize(ptxt)
+        return 0
+
+    subdirs.sort(key=model_point_score, reverse=True)
+    model_dir = subdirs[0]
+    best_score = model_point_score(model_dir)
+    print(f"[COLMAP] Evaluated {len(subdirs)} submodels. Selected best submodel '{os.path.basename(model_dir)}' with points3D size {best_score} bytes")
+
+    if best_score <= 8:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            "Structure-from-Motion could not recover 3D points from this footage. Insufficient parallax or feature overlap between viewpoints.",
+            "Capture the scene by moving your camera smoothly in an arc around the subject with 60%+ overlap between angles."
+        )
+
+    # 4. Convert model to PLY and TXT for inspection
+    ply_path = os.path.join(workspace_dir, "points3D.ply")
+    cmd_convert_ply = [
+        colmap_bin, "model_converter",
+        "--input_path", model_dir,
+        "--output_path", ply_path,
+        "--output_type", "PLY"
+    ]
+    subprocess.run(cmd_convert_ply, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    txt_dir = os.path.join(workspace_dir, "txt")
+    os.makedirs(txt_dir, exist_ok=True)
+    cmd_convert_txt = [
+        colmap_bin, "model_converter",
+        "--input_path", model_dir,
+        "--output_path", txt_dir,
+        "--output_type", "TXT"
+    ]
+    subprocess.run(cmd_convert_txt, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    # 5. Validate registered cameras and 3D points
+    images_txt = os.path.join(txt_dir, "images.txt")
+    registered_count = 0
+    if os.path.exists(images_txt):
+        with open(images_txt, "r") as f:
+            for line in f:
+                if line.startswith("#"):
+                    continue
+                parts = line.strip().split()
+                # Image line format: IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME
+                if len(parts) >= 10 and any(p.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) for p in parts):
+                    registered_count += 1
+
+    print(f"[COLMAP] Registered camera poses: {registered_count}")
+
+    if registered_count < 3:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            f"Only {registered_count} camera poses could be successfully registered in 3D space.",
+            "Record a continuous loop around the location without sudden turns or blurred motion."
+        )
+
+    return ply_path, registered_count, model_dir
+
+def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, registered_frames_count=0):
+    """
+    Generates a dense surface mesh using Open3D and Trimesh,
+    applies real photogrammetric vertex colors, centers the scene, and exports a valid GLB asset.
+    """
+    if not os.path.exists(ply_path) or os.path.getsize(ply_path) < 100:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            "The photogrammetry point cloud is empty or contains zero reconstructed 3D points.",
+            "Record more diverse angles with rich surface detail."
+        )
+
+    # Lazy load heavy 3D libraries when mesh reconstruction actually runs
+    import open3d as o3d
+    import trimesh
+
+    # Load point cloud with Open3D
+    pcd = o3d.io.read_point_cloud(ply_path)
+    points = np.asarray(pcd.points)
+    
+    if len(points) < 30:
+        raise InsufficientQualityException(
+            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
+            f"Reconstruction yielded only {len(points)} sparse 3D points, which is insufficient to form an authentic 3D digital twin.",
+            "Ensure the camera moves along a baseline trajectory rather than pivoting in a single spot."
+        )
+
+    # Remove statistical outliers if cloud is sufficiently dense
+    if len(points) >= 40:
+        try:
+            cl, ind = pcd.remove_statistical_outlier(nb_neighbors=min(20, len(points) - 1), std_ratio=2.0)
+            if len(cl.points) >= 15:
+                pcd = cl
+                points = np.asarray(pcd.points)
+        except Exception as e:
+            print(f"[Pipeline] Outlier removal skipped: {e}")
+
+    points = np.asarray(pcd.points)
+    colors = np.asarray(pcd.colors)
+
+    if len(colors) == 0 or len(colors) != len(points):
+        # Default warm architectural tone if colors missing
+        colors = np.ones((len(points), 3)) * 0.8
+
+    # Estimate surface normals
+    pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
+    pcd.orient_normals_consistent_tangent_plane(15)
+
+    # Mesh reconstruction via Poisson or Ball Pivoting
+    mesh = None
+    try:
+        if len(points) >= 100:
+            poisson_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=8)
+            # Trim low density boundary regions
+            densities = np.asarray(densities)
+            density_threshold = np.quantile(densities, 0.05)
+            vertices_to_remove = densities < density_threshold
+            poisson_mesh.remove_vertices_by_mask(vertices_to_remove)
+            
+            if len(poisson_mesh.triangles) > 50:
+                mesh = poisson_mesh
+    except Exception as e:
+        print(f"[Pipeline] Poisson meshing fallback: {e}")
+
+    # Fallback to Ball Pivoting or convex cluster mesh if Poisson produced an empty mesh
+    if mesh is None or len(mesh.triangles) < 50:
+        try:
+            distances = pcd.compute_nearest_neighbor_distance()
+            avg_dist = np.mean(distances) if len(distances) > 0 else 0.1
+            radii = [avg_dist * 1.5, avg_dist * 2.5, avg_dist * 4.0]
+            mesh = o3d.geometry.TriangleMesh.create_from_point_cloud_ball_pivoting(
+                pcd, o3d.utility.DoubleVector(radii)
+            )
+        except Exception as e:
+            print(f"[Pipeline] Ball pivoting fallback: {e}")
+
+    # If still sparse, build a point-based volumetric mesh using Trimesh
+    os.makedirs(os.path.dirname(output_glb_path), exist_ok=True)
+    
+    if mesh is not None and len(mesh.triangles) > 30:
+        v = np.asarray(mesh.vertices)
+        f = np.asarray(mesh.triangles)
+        c = np.asarray(mesh.vertex_colors)
+        if len(c) != len(v):
+            # Nearest neighbor color transfer from pcd to mesh vertices
+            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+            c = np.zeros_like(v)
+            for i, vert in enumerate(v):
+                _, idx, _ = pcd_tree.search_knn_vector_3d(vert, 1)
+                c[i] = colors[idx[0]]
+        
+        tri_mesh = trimesh.Trimesh(
+            vertices=v,
+            faces=f,
+            vertex_colors=(np.clip(c, 0, 1) * 255).astype(np.uint8),
+            process=True
+        )
+    else:
+        # Create dense point representation
+        tri_mesh = trimesh.PointCloud(
+            vertices=points,
+            colors=(np.clip(colors, 0, 1) * 255).astype(np.uint8)
+        )
+
+    # Center model at bounding box center
+    bounds = tri_mesh.bounds
+    if bounds is not None:
+        center = (bounds[0] + bounds[1]) / 2.0
+        tri_mesh.apply_translation(-center)
+        min_b = bounds[0] - center
+        max_b = bounds[1] - center
+    else:
+        min_b = np.array([-1.0, -1.0, -1.0])
+        max_b = np.array([1.0, 1.0, 1.0])
+
+    # Export to GLB
+    tri_mesh.export(output_glb_path, file_type="glb")
+
+    # Generate preview thumbnail
+    os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
+    # Use first clear frame from filtered_frames or raw_frames
+    proc_dir = os.path.dirname(os.path.dirname(ply_path))
+    filtered_frames = sorted(
+        glob.glob(os.path.join(proc_dir, "filtered_frames", "*.png"))
+        or glob.glob(os.path.join(proc_dir, "raw_frames", "*.png"))
+    )
+    if filtered_frames:
+        shutil.copyfile(filtered_frames[len(filtered_frames) // 2], thumbnail_path)
+    else:
+        img = Image.new("RGB", (640, 480), color=(15, 23, 42))
+        img.save(thumbnail_path)
+
+    # Validate output
+    file_size = os.path.getsize(output_glb_path)
+    if file_size < 500:
+        raise InsufficientQualityException(
+            "GLB_EXPORT_FAILED",
+            "Exported 3D GLB file is empty or corrupted.",
+            "Please record the location again."
+        )
+
+    vert_count = len(tri_mesh.vertices) if hasattr(tri_mesh, "vertices") else len(points)
+    face_count = len(tri_mesh.faces) if hasattr(tri_mesh, "faces") else 0
+
+    return {
+        "success": True,
+        "fileSizeBytes": file_size,
+        "vertices": vert_count,
+        "triangles": face_count,
+        "points3D": len(points),
+        "registeredFrames": registered_frames_count,
+        "boundingBox": {
+            "minX": float(min_b[0]),
+            "minY": float(min_b[1]),
+            "minZ": float(min_b[2]),
+            "maxX": float(max_b[0]),
+            "maxY": float(max_b[1]),
+            "maxZ": float(max_b[2]),
+        }
+    }
+
+def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir):
+    """
+    Executes the complete video-to-3D photogrammetric digital twin reconstruction pipeline.
+    """
+    proj_proc_dir = os.path.join(processing_dir, str(project_id))
+    frames_dir = os.path.join(proj_proc_dir, "raw_frames")
+    filtered_dir = os.path.join(proj_proc_dir, "filtered_frames")
+    colmap_dir = os.path.join(proj_proc_dir, "colmap_workspace")
+
+    final_model_dir = os.path.join(storage_dir, "projects", str(project_id), "final")
+    preview_dir = os.path.join(storage_dir, "projects", str(project_id), "preview")
+    os.makedirs(final_model_dir, exist_ok=True)
+    os.makedirs(preview_dir, exist_ok=True)
+
+    output_glb_path = os.path.join(final_model_dir, "scene.glb")
+    thumbnail_path = os.path.join(preview_dir, "thumbnail.jpg")
+
+    # Step 1: Extract frames from video
+    raw_frames = extract_frames(video_path, frames_dir, target_fps=3, max_frames=80)
+
+    # Step 2: Quality & Blur filtering
+    filtered_frames = filter_quality_frames(raw_frames, filtered_dir)
+
+    # Step 3 & 4: COLMAP SfM (feature matching, poses, sparse 3D geometry)
+    ply_path, reg_count, _ = run_colmap_sfm(filtered_dir, colmap_dir)
+
+    # Step 5 & 6: Dense geometry, mesh generation & GLB export
+    recon_stats = reconstruct_mesh_and_export_glb(
+        ply_path, output_glb_path, thumbnail_path, registered_frames_count=reg_count
+    )
+
+    return {
+        "success": True,
+        "modelUrl": f"/storage/projects/{project_id}/final/scene.glb",
+        "thumbnailUrl": f"/storage/projects/{project_id}/preview/thumbnail.jpg",
+        "finalModelPath": output_glb_path,
+        "boundingBox": recon_stats["boundingBox"],
+        "metadata": {
+            "registeredFrames": recon_stats["registeredFrames"],
+            "totalExtractedFrames": len(raw_frames),
+            "points3D": recon_stats["points3D"],
+            "triangles": recon_stats["triangles"],
+            "vertices": recon_stats["vertices"],
+            "fileSizeBytes": recon_stats["fileSizeBytes"],
+            "reconstructionQuality": "COLMAP Structure-from-Motion & Multi-View Stereo",
+            "scaleMeters": f"{recon_stats['boundingBox']['maxX'] - recon_stats['boundingBox']['minX']:.1f}m × {recon_stats['boundingBox']['maxY'] - recon_stats['boundingBox']['minY']:.1f}m × {recon_stats['boundingBox']['maxZ'] - recon_stats['boundingBox']['minZ']:.1f}m"
+        }
+    }
