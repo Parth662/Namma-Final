@@ -11,6 +11,8 @@ import { handleVideoUpload } from '../controllers/upload.controller.js';
 import {
   startReconstruction,
   getReconstructionStatus,
+  cancelReconstruction,
+  handleInternalProgress,
 } from '../controllers/reconstruction.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 import { uploadVideoMiddleware, validateProjectForUpload } from '../middleware/upload.middleware.js';
@@ -32,8 +34,10 @@ router.post(
   handleVideoUpload
 );
 
-// Reconstruction Trigger & Status (Section 7, 20)
+// Reconstruction Trigger, Status & Cancel (Section 7, 20)
+router.post('/internal/progress', handleInternalProgress);
 router.post('/:id/reconstruct', authenticate, startReconstruction);
+router.post('/:id/cancel', authenticate, cancelReconstruction);
 router.get('/:id/status', authenticate, getReconstructionStatus);
 
 // Digital Twin Model & Metadata for 3D View (Section 18, 21)

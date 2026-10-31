@@ -3,6 +3,7 @@ import {
   startReconstruction,
   getReconstructionStatus,
   handleInternalProgress,
+  cancelReconstruction,
 } from '../controllers/reconstruction.controller.js';
 import { authenticate } from '../middleware/auth.middleware.js';
 
@@ -13,6 +14,9 @@ router.post('/internal/progress', handleInternalProgress);
 
 // POST /api/projects/:id/reconstruct
 router.post('/:id/reconstruct', authenticate, startReconstruction);
+
+// POST /api/projects/:id/cancel
+router.post('/:id/cancel', authenticate, cancelReconstruction);
 
 // GET /api/projects/:id/status
 router.get('/:id/status', authenticate, getReconstructionStatus);

@@ -183,6 +183,18 @@ const runTests = async () => {
     assert(statusData.status === 'queued' || statusData.status === 'processing');
     console.log('✓ Reconstruction status check passed');
 
+    // 10b. Cancel endpoint (Step 2.10)
+    console.log(`Testing POST /api/projects/${project._id}/cancel ...`);
+    const cancelRes = await fetch(`${baseUrl}/api/projects/${project._id}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    assert.strictEqual(cancelRes.status, 200);
+    const cancelData = await cancelRes.json();
+    assert.strictEqual(cancelData.success, true);
+    assert.strictEqual(cancelData.status, 'cancelled');
+    console.log('✓ Project cancellation endpoint passed');
+
     // 11. Delete Project
     console.log(`Testing DELETE /api/projects/${project._id} ...`);
     const delRes = await fetch(`${baseUrl}/api/projects/${project._id}`, {

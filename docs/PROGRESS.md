@@ -45,7 +45,7 @@
 - [x] **Step 2.7:** Active job timeout in worker: abort engine request, kill FFmpeg/COLMAP subprocesses, mark `failed`, free slot.
 - [x] **Step 2.8:** Retries: `attempts: 2` with exponential backoff for transient errors only; never for rejected videos.
 - [x] **Step 2.9:** Stalled/restart recovery: tune `lockDuration`/stalled settings; on startup mark orphaned `processing` projects as `failed`.
-- [ ] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).
+- [x] **Step 2.10:** Cancellation endpoint `POST /api/projects/:id/cancel` + per-user queued-job limit (default 2).
 - [ ] **Step 2.11:** Move worker to dedicated process (`npm run worker`) with `WORKER_CONCURRENCY` (default 1). Document running N copies and state laptop limitations.
 - [ ] **Step 2.12:** Optional auto-scaler script based on `queue.getWaitingCount()` with hard cap; document cloud instance mapping.
 - [ ] **Step 2.13:** Engine `GET /health` reports mode (CPU/CUDA), versions, and free RAM. Write `docs/GPU_DEPLOY.md`.
