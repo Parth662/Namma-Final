@@ -6,5 +6,6 @@ processing/
 outputs/
 python-service/venv/
 python-service/__pycache__/
+mongodb_data/
 *.pyc
 .DS_Store

@@ -37,6 +37,6 @@ export const env = {
   FRAME_INTERVAL: parseInt(process.env.FRAME_INTERVAL, 10) || 5,
   FFMPEG_PATH: process.env.FFMPEG_PATH || 'ffmpeg',
   FFPROBE_PATH: process.env.FFPROBE_PATH || 'ffprobe',
-  COLMAP_PATH: process.env.COLMAP_PATH || (process.platform === 'win32' ? path.resolve(rootDir, 'tools/colmap/COLMAP.bat') : '/opt/homebrew/bin/colmap'),
+  COLMAP_PATH: process.env.COLMAP_PATH || (process.platform === 'win32' ? (path.resolve(rootDir, 'tools/colmap/bin/colmap.exe')) : '/opt/homebrew/bin/colmap'),
   rootDir,
 };

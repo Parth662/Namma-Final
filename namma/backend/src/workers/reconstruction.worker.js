@@ -92,9 +92,9 @@ export const startReconstructionWorker = () => {
         }
 
         if (!response.success) {
-          const isRejected = response.rejected || (response.error && (response.error.startsWith('REJECTED_') || response.error.startsWith('INSUFFICIENT_')));
-          if (isRejected) {
-            console.warn(`[Worker] Project ${projectId} rejected early: ${response.reason}`);
+          const isQualityIssue = response.rejected || (response.error && (response.error.startsWith('REJECTED_') || response.error.startsWith('INSUFFICIENT_')));
+          if (isQualityIssue) {
+            console.warn(`[Worker] Project ${projectId} quality issue: ${response.reason}`);
             project.status = 'rejected';
             project.currentStage = 'REJECTED';
             project.progress = 0;
@@ -109,20 +109,22 @@ export const startReconstructionWorker = () => {
             reconJob.completedAt = new Date();
             await reconJob.save();
 
-            emitProjectProgress(projectId, {
-              status: 'rejected',
-              stage: 'REJECTED',
-              progress: 0,
+            emitJobFailed(projectId, {
+              title: response.title || 'Reconstruction Quality Issue',
+              code: response.error || 'INSUFFICIENT_RECONSTRUCTION_QUALITY',
               reason: response.reason,
               suggestion: response.suggestion,
+              rejected: true,
             });
 
             return { success: false, rejected: true, reason: response.reason };
           }
 
           const customErr = new Error(response.reason || response.error || 'Reconstruction failed in Python 3D engine');
-          customErr.code = response.error || 'INSUFFICIENT_RECONSTRUCTION_QUALITY';
-          customErr.suggestion = response.suggestion || 'Record the area again while moving slowly with steady overlapping camera angles.';
+          customErr.title = response.title || 'Server processing error';
+          customErr.code = response.error || 'SERVER_PROCESSING_ERROR';
+          customErr.suggestion = response.suggestion || (response.logPath ? `Server log: ${response.logPath}` : 'Check server logs for details.');
+          customErr.logPath = response.logPath;
           throw customErr;
         }
 
@@ -161,8 +163,11 @@ export const startReconstructionWorker = () => {
       } catch (err) {
         console.error(`[Worker] Error processing job ${jobId}:`, err);
 
+        const isQuality = err.code && (err.code.startsWith('REJECTED_') || err.code.startsWith('INSUFFICIENT_'));
+        const failureTitle = err.title || (isQuality ? 'Reconstruction Quality Issue' : 'Server processing error');
+        const failureCode = err.code || (isQuality ? 'INSUFFICIENT_RECONSTRUCTION_QUALITY' : 'SERVER_PROCESSING_ERROR');
         const failureReason = err.message || 'Photogrammetry pipeline encountered an error';
-        const suggestion = err.suggestion || 'Record the area again while moving slowly with steady overlapping camera angles.';
+        const suggestion = err.suggestion || (err.logPath ? `Server log: ${err.logPath}` : 'Check server logs for diagnostic output.');
 
         project.status = 'failed';
         project.currentStage = 'FAILED';
@@ -172,16 +177,22 @@ export const startReconstructionWorker = () => {
         reconJob.status = 'failed';
         reconJob.currentStage = 'FAILED';
         reconJob.error = {
+          title: failureTitle,
+          code: failureCode,
           reason: failureReason,
           suggestion,
+          logPath: err.logPath,
           rawError: err.toString(),
         };
         reconJob.completedAt = new Date();
         await reconJob.save();
 
         emitJobFailed(projectId, {
+          title: failureTitle,
+          code: failureCode,
           reason: failureReason,
           suggestion,
+          logPath: err.logPath,
           rejected: false,
         });
 

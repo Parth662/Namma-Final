@@ -857,10 +857,13 @@ export default function CameraScreen() {
         socket.on('job:failed', (payload) => {
           cleanupMonitoring();
           setIsConverting(false);
+          const isQuality = payload?.code && (payload.code.startsWith('REJECTED_') || payload.code.startsWith('INSUFFICIENT_'));
           setConversionError({
-            code: payload?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY',
-            reason: payload?.reason || '3D reconstruction could not recover geometry from footage.',
-            suggestion: payload?.suggestion || 'Please record more overlapping angles with slower camera motion.',
+            title: payload?.title || (isQuality ? 'Reconstruction Quality Issue' : 'Server processing error'),
+            code: payload?.code || (isQuality ? 'INSUFFICIENT_RECONSTRUCTION_QUALITY' : 'SERVER_PROCESSING_ERROR'),
+            reason: payload?.reason || '3D reconstruction encountered an error.',
+            suggestion: payload?.suggestion || (payload?.logPath ? `Server log: ${payload.logPath}` : 'Please inspect server logs for details.'),
+            logPath: payload?.logPath,
           });
         });
       } catch (sockErr) {
@@ -885,13 +888,18 @@ export default function CameraScreen() {
             }
           } else if (statusData.status === 'completed') {
             handleReconSuccess();
-          } else if (statusData.status === 'failed') {
+          } else if (statusData.status === 'failed' || statusData.status === 'rejected') {
             cleanupMonitoring();
             setIsConverting(false);
+            const errObj = statusData.error || {};
+            const code = statusData.code || errObj.code || (statusData.status === 'rejected' ? 'INSUFFICIENT_RECONSTRUCTION_QUALITY' : 'SERVER_PROCESSING_ERROR');
+            const isQuality = code.startsWith('REJECTED_') || code.startsWith('INSUFFICIENT_');
             setConversionError({
-              code: statusData.error?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY',
-              reason: statusData.reason || statusData.error?.reason || '3D reconstruction could not recover geometry from footage.',
-              suggestion: statusData.suggestion || statusData.error?.suggestion || 'Please record more overlapping angles with slower camera motion.',
+              title: statusData.title || errObj.title || (isQuality ? 'Reconstruction Quality Issue' : 'Server processing error'),
+              code,
+              reason: statusData.reason || errObj.reason || '3D reconstruction encountered an error.',
+              suggestion: statusData.suggestion || errObj.suggestion || (statusData.logPath || errObj.logPath ? `Server log: ${statusData.logPath || errObj.logPath}` : 'Please inspect server logs.'),
+              logPath: statusData.logPath || errObj.logPath,
             });
           }
         } catch (pollErr) {
@@ -1380,7 +1388,9 @@ export default function CameraScreen() {
           <View style={styles.modalOverlay}>
             <View style={[styles.conversionModalCard, { borderColor: '#ef4444' }]}>
               <View style={{ alignItems: 'center', marginBottom: 12 }}>
-                <Text style={{ fontSize: 32, marginBottom: 6 }}>{conversionError?.isNetworkError ? '🌐' : '⚠️'}</Text>
+                <Text style={{ fontSize: 32, marginBottom: 6 }}>
+                  {conversionError?.isNetworkError ? '🌐' : (conversionError?.title === 'Server processing error' ? '⚙️' : '⚠️')}
+                </Text>
                 <Text style={styles.conversionTitle}>
                   {conversionError?.title || (conversionError?.isNetworkError ? `Can't reach the server at ${conversionError?.url || getBackendHost()}` : 'Reconstruction Quality Issue')}
                 </Text>
@@ -1388,12 +1398,14 @@ export default function CameraScreen() {
                   {conversionError?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY'}
                 </Text>
               </View>
-              <Text style={{ color: '#cbd5e1', fontSize: 14, textAlign: 'center', lineHeight: 20, marginBottom: 16 }}>
+              <Text style={{ color: '#cbd5e1', fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 16 }}>
                 {conversionError?.reason}
               </Text>
               <View style={{ backgroundColor: '#1e293b', padding: 12, borderRadius: 8, width: '100%', marginBottom: 16 }}>
                 <Text style={{ color: '#38bdf8', fontSize: 12, fontWeight: '700', marginBottom: 4 }}>
-                  {conversionError?.isNetworkError ? '🌐 Connection Help:' : '💡 Photogrammetry Recommendation:'}
+                  {conversionError?.isNetworkError
+                    ? '🌐 Connection Help:'
+                    : (conversionError?.title === 'Server processing error' ? '⚙️ Diagnostic Info / Log Location:' : '💡 Photogrammetry Recommendation:')}
                 </Text>
                 <Text style={{ color: '#94a3b8', fontSize: 12, lineHeight: 18 }}>
                   {conversionError?.suggestion}
@@ -1404,7 +1416,7 @@ export default function CameraScreen() {
                 onPress={() => setConversionError(null)}
               >
                 <Text style={{ color: '#ffffff', fontSize: 14, fontWeight: '700' }}>
-                  {conversionError?.isNetworkError ? 'Dismiss' : 'Record New Footage'}
+                  {conversionError?.isNetworkError ? 'Dismiss' : (conversionError?.title === 'Server processing error' ? 'Dismiss' : 'Record New Footage')}
                 </Text>
               </TouchableOpacity>
             </View>

@@ -2,12 +2,13 @@ import os
 import shutil
 import sys
 import traceback
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-from pipeline import run_pipeline, InsufficientQualityException, kill_job_processes
+from pipeline import run_pipeline, InsufficientQualityException, ServerProcessingException, kill_job_processes
 
 app = FastAPI(title="3D Photogrammetry & Digital Twin Reconstruction Service")
 
@@ -19,9 +20,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DEFAULT_STORAGE_DIR = os.path.join(BACKEND_ROOT, "storage")
-DEFAULT_PROCESSING_DIR = os.path.join(BACKEND_ROOT, "processing")
+BACKEND_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_STORAGE_DIR = str(Path(os.environ.get("STORAGE_DIR", BACKEND_ROOT / "storage")).resolve())
+DEFAULT_PROCESSING_DIR = str(Path(os.environ.get("PROCESSING_DIR", BACKEND_ROOT / "processing")).resolve())
 
 class ReconstructRequest(BaseModel):
     jobId: str
@@ -188,18 +189,32 @@ def reconstruct(req: ReconstructRequest):
         print(f"[PythonEngine] Insufficient quality exception: {iqe.code} - {iqe.reason}")
         return {
             "success": False,
+            "title": getattr(iqe, "title", "Reconstruction Quality Issue"),
             "rejected": bool(iqe.code.startswith("REJECTED_") or iqe.code.startswith("INSUFFICIENT_")),
             "error": iqe.code,
             "reason": iqe.reason,
             "suggestion": iqe.suggestion,
         }
+    except ServerProcessingException as spe:
+        print(f"[PythonEngine] Server processing exception: {spe.reason}")
+        return {
+            "success": False,
+            "title": getattr(spe, "title", "Server processing error"),
+            "rejected": False,
+            "error": spe.code,
+            "reason": spe.reason,
+            "suggestion": spe.suggestion,
+            "logPath": spe.log_path,
+        }
     except Exception as e:
         traceback.print_exc()
         return {
             "success": False,
-            "error": "RECONSTRUCTION_PIPELINE_ERROR",
-            "reason": f"Photogrammetry pipeline error: {str(e)}",
-            "suggestion": "Please ensure video footage is clear, unblurred, and contains overlapping viewpoints."
+            "title": "Server processing error",
+            "rejected": False,
+            "error": "SERVER_PROCESSING_ERROR",
+            "reason": f"Photogrammetry pipeline execution error: {str(e)}",
+            "suggestion": "Check server processing logs for details."
         }
 
 if __name__ == "__main__":

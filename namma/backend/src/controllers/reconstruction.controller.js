@@ -128,13 +128,16 @@ export const getReconstructionStatus = async (req, res, next) => {
 
     const latestJob = await ReconstructionJob.findOne({ projectId: id }).sort({ createdAt: -1 });
 
-    if (project.status === 'failed' && latestJob?.error) {
+    if ((project.status === 'failed' || project.status === 'rejected') && latestJob?.error) {
       return res.status(200).json({
         projectId: project._id,
-        status: 'failed',
+        status: project.status,
+        title: latestJob.error.title,
+        code: latestJob.error.code,
         reason: latestJob.error.reason || 'Reconstruction process failed',
         suggestion:
           latestJob.error.suggestion || 'Please try recording the location again with slow, overlapping camera movements.',
+        logPath: latestJob.error.logPath,
         error: latestJob.error,
         updatedAt: project.updatedAt,
       });

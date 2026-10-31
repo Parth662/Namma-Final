@@ -94,12 +94,19 @@ export const emitJobCompleted = (projectId, payload = {}) => {
   }
 };
 
-export const emitJobFailed = (projectId, { reason, suggestion, rejected = false }) => {
+export const emitJobFailed = (projectId, { title, code, reason, suggestion, logPath, rejected = false }) => {
   if (ioInstance) {
+    const isQuality = rejected || (code && (code.startsWith('REJECTED_') || code.startsWith('INSUFFICIENT_')));
+    const finalTitle = title || (isQuality ? 'Reconstruction Quality Issue' : 'Server processing error');
+    const finalCode = code || (isQuality ? 'INSUFFICIENT_RECONSTRUCTION_QUALITY' : 'SERVER_PROCESSING_ERROR');
+
     ioInstance.to(`project:${projectId}`).emit('job:failed', {
       projectId,
+      title: finalTitle,
+      code: finalCode,
       reason,
       suggestion,
+      logPath,
       rejected,
       timestamp: new Date().toISOString(),
     });
@@ -107,8 +114,11 @@ export const emitJobFailed = (projectId, { reason, suggestion, rejected = false 
       status: rejected ? 'rejected' : 'failed',
       stage: rejected ? 'rejected' : 'failed',
       progress: 0,
+      title: finalTitle,
+      code: finalCode,
       reason,
       suggestion,
+      logPath,
     });
   }
 };
