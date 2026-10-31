@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { storageService } from '../services/storage.service.js';
+import { VideoValidationService } from '../services/videoValidation.service.js';
 
 export const handleVideoUpload = async (req, res, next) => {
   try {
@@ -8,6 +9,18 @@ export const handleVideoUpload = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         error: 'No video file uploaded. Please provide a valid MP4, MOV, or WebM video.',
+      });
+    }
+
+    // Step 2.2: Validate video format, codec, resolution, and duration using ffprobe
+    const validation = await VideoValidationService.validateVideo(req.file.path);
+    if (!validation.valid) {
+      if (fs.existsSync(req.file.path)) {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+      }
+      return res.status(400).json({
+        success: false,
+        error: validation.reason,
       });
     }
 
@@ -24,6 +37,11 @@ export const handleVideoUpload = async (req, res, next) => {
     project.status = 'uploaded';
     project.currentStage = 'UPLOADED';
     project.progress = 10; // Section 19: UPLOAD 0-10%
+    if (validation.duration) {
+      project.videoDurationSeconds = validation.duration;
+      project.videoResolution = `${validation.width}x${validation.height}`;
+      project.videoCodec = validation.codec;
+    }
     await project.save();
 
     res.status(200).json({
@@ -38,6 +56,12 @@ export const handleVideoUpload = async (req, res, next) => {
         size: req.file.size,
         mimeType: req.file.mimetype,
         storagePath: req.file.path,
+        videoMeta: {
+          codec: validation.codec,
+          width: validation.width,
+          height: validation.height,
+          duration: validation.duration,
+        },
       },
     });
   } catch (error) {
