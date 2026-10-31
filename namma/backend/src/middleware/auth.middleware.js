@@ -41,3 +41,29 @@ export const authenticate = async (req, res, next) => {
     next(error);
   }
 };
+
+export const optionalAuthenticate = async (req, res, next) => {
+  try {
+    let token = null;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      req.user = null;
+      return next();
+    }
+
+    try {
+      const decoded = jwt.verify(token, env.JWT_SECRET);
+      const user = await User.findById(decoded.id).select('-password');
+      req.user = user || null;
+    } catch {
+      req.user = null;
+    }
+
+    next();
+  } catch (error) {
+    next(error);
+  }
+};

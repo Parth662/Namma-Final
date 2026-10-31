@@ -15,8 +15,9 @@ import {
   cancelReconstruction,
   handleInternalProgress,
 } from '../controllers/reconstruction.controller.js';
-import { authenticate } from '../middleware/auth.middleware.js';
+import { authenticate, optionalAuthenticate } from '../middleware/auth.middleware.js';
 import { uploadVideoMiddleware, validateProjectForUpload } from '../middleware/upload.middleware.js';
+import { getProjectNavGrid, getProjectPath } from '../controllers/navigation.controller.js';
 
 const router = express.Router();
 
@@ -45,5 +46,9 @@ router.get('/:id/status', authenticate, getReconstructionStatus);
 router.get('/:id/metadata', authenticate, getProjectMetadata);
 router.get('/:id/model', authenticate, getProjectModel);
 router.post('/:id/calibrate', authenticate, calibrateProject);
+
+// Navigation & Pathfinding (Phase 4)
+router.get('/:id/navgrid', optionalAuthenticate, getProjectNavGrid);
+router.get('/:id/path', optionalAuthenticate, getProjectPath);
 
 export default router;
