@@ -19,6 +19,8 @@ const mongoose = require('mongoose');
 // Dynamic import from backend source using pathToFileURL for Windows compatibility
 const { User } = await import(pathToFileURL(path.join(backendDir, 'src/models/User.js')).href);
 const { Project } = await import(pathToFileURL(path.join(backendDir, 'src/models/Project.js')).href);
+const { POI } = await import(pathToFileURL(path.join(backendDir, 'src/models/POI.js')).href);
+const { navigationService } = await import(pathToFileURL(path.join(backendDir, 'src/services/navigation.service.js')).href);
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/digital_twin_db';
 
@@ -101,6 +103,102 @@ const seedDemo = async () => {
       fs.copyFileSync(demoNavSource, demoProjNavDest);
       console.log(`✓ Seeded Navigation Grid for Demo Project at: ${demoProjNavDest}`);
     }
+
+    // 4. Seed 7 Realistic Points of Interest (POIs) with snapped walkable navPoints
+    console.log('Seeding demo Points of Interest (POIs)...');
+    await POI.deleteMany({ projectId: demoProject._id });
+
+    const navGrid = await navigationService.getNavGrid(demoProject._id);
+
+    const demoPOIsData = [
+      {
+        name: 'Autonomous Robotics Bay',
+        category: 'equipment',
+        description: 'Testing arena and inductive charging pad for autonomous mobile inspection robots.',
+        tags: ['robotics', 'drone', 'hardware', 'inspection', 'charging'],
+        position: { x: -1.2, y: 0.4, z: -0.8 },
+        icon: 'cpu',
+        color: '#6366f1',
+      },
+      {
+        name: 'AI Command Center',
+        category: 'room',
+        description: 'Multi-screen telemetry control room supervising autonomous operations.',
+        tags: ['ai', 'supercomputer', 'monitoring', 'telemetry', 'control'],
+        position: { x: 1.1, y: 0.5, z: -0.9 },
+        icon: 'monitor',
+        color: '#3b82f6',
+      },
+      {
+        name: 'Main Plaza Entrance',
+        category: 'entrance',
+        description: 'Glass turnstile entryway and visitor identification check-in.',
+        tags: ['entrance', 'exit', 'access', 'lobby', 'gate', 'reception'],
+        position: { x: 0.0, y: 0.2, z: 1.4 },
+        icon: 'door',
+        color: '#10b981',
+      },
+      {
+        name: 'Emergency Eye-Wash & First Aid',
+        category: 'emergency',
+        description: 'OSHA-certified emergency chemical eye-wash and automated defibrillator unit.',
+        tags: ['emergency', 'medical', 'first-aid', 'safety', 'health', 'aed'],
+        position: { x: -1.6, y: 0.6, z: 0.2 },
+        icon: 'cross',
+        color: '#ef4444',
+      },
+      {
+        name: 'Rapid Prototyping Workshop (3D Printers)',
+        category: 'equipment',
+        description: 'Industrial stereolithography and composite FDM 3D printing cluster.',
+        tags: ['3d-printing', 'fabrication', 'maker', 'hardware', 'prototyping'],
+        position: { x: 1.4, y: 0.4, z: 0.3 },
+        icon: 'tool',
+        color: '#f59e0b',
+      },
+      {
+        name: 'Hydration & Coffee Station',
+        category: 'amenity',
+        description: 'Artisanal espresso bar and cold-filtered water dispenser for project teams.',
+        tags: ['coffee', 'water', 'drink', 'pantry', 'breakroom', 'amenity'],
+        position: { x: 0.8, y: 0.3, z: 1.1 },
+        icon: 'coffee',
+        color: '#8b5cf6',
+      },
+      {
+        name: 'Central Collaboration Quad',
+        category: 'landmark',
+        description: 'Open circular amphitheater and whiteboard pavilion for engineering standups.',
+        tags: ['quad', 'meeting', 'plaza', 'central', 'standup', 'collaboration'],
+        position: { x: 0.0, y: 0.1, z: -0.1 },
+        icon: 'star',
+        color: '#ec4899',
+      },
+    ];
+
+    for (const poiData of demoPOIsData) {
+      let navPoint = { x: poiData.position.x, y: 0.0, z: poiData.position.z };
+      if (navGrid) {
+        const snapped = navigationService.snapToWalkable(poiData.position.x, poiData.position.z, navGrid, 3.0);
+        if (snapped) {
+          navPoint = { x: snapped.x, y: 0.0, z: snapped.z };
+        }
+      }
+
+      await POI.create({
+        projectId: demoProject._id,
+        name: poiData.name,
+        category: poiData.category,
+        description: poiData.description,
+        tags: poiData.tags,
+        position: poiData.position,
+        navPoint,
+        createdBy: demoUser._id,
+        icon: poiData.icon,
+        color: poiData.color,
+      });
+    }
+    console.log(`✓ Seeded ${demoPOIsData.length} Points of Interest (POIs) with snapped navigation targets`);
 
     console.log('\n======================================================');
     console.log(' DEMO SCENE SEEDED SUCCESSFULLY! ');

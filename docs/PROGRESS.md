@@ -77,11 +77,11 @@
 
 ### Phase 5 — POIs + Search
 - [x] **Step 5.1:** MongoDB model `pois`: `{projectId, name, category, description, tags[], position, navPoint, createdBy, createdAt}` with text index.
-- [ ] **Step 5.2:** CRUD endpoints with ownership checks (public read for demo).
-- [ ] **Step 5.3:** Snap POIs to nearest walkable grid cell (`navPoint`); clear error if outside boundaries.
-- [ ] **Step 5.4:** `GET /api/projects/:id/pois?q=` ranked search: text index + prefix/fuzzy fallback.
-- [ ] **Step 5.5:** Seed 6–8 realistic POIs on demo scene via `seed-demo.js`.
-- [ ] **Step 5.6:** Tests for POI CRUD, ownership, search ranking, snapping. Commit Phase 5.
+- [x] **Step 5.2:** CRUD endpoints with ownership checks (public read for demo).
+- [x] **Step 5.3:** Snap POIs to nearest walkable grid cell (`navPoint`); clear error if outside boundaries.
+- [x] **Step 5.4:** `GET /api/projects/:id/pois?q=` ranked search: text index + prefix/fuzzy fallback.
+- [x] **Step 5.5:** Seed 6–8 realistic POIs on demo scene via `seed-demo.js`.
+- [x] **Step 5.6:** Tests for POI CRUD, ownership, search ranking, snapping. Commit Phase 5.
 
 ---
 

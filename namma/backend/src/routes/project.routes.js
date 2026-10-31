@@ -18,6 +18,7 @@ import {
 import { authenticate, optionalAuthenticate } from '../middleware/auth.middleware.js';
 import { uploadVideoMiddleware, validateProjectForUpload } from '../middleware/upload.middleware.js';
 import { getProjectNavGrid, getProjectPath } from '../controllers/navigation.controller.js';
+import poiRoutes from './poi.routes.js';
 
 const router = express.Router();
 
@@ -50,5 +51,8 @@ router.post('/:id/calibrate', authenticate, calibrateProject);
 // Navigation & Pathfinding (Phase 4)
 router.get('/:id/navgrid', optionalAuthenticate, getProjectNavGrid);
 router.get('/:id/path', optionalAuthenticate, getProjectPath);
+
+// Points of Interest (Phase 5)
+router.use('/:id/pois', poiRoutes);
 
 export default router;
