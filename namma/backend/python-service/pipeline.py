@@ -592,16 +592,26 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             colors=(np.clip(colors, 0, 1) * 255).astype(np.uint8)
         )
 
-    # Center model at bounding box center
+    # Step 5b: Floor-plane alignment and centering via RANSAC
+    alignment_meta = {}
+    try:
+        from navigation.alignment import align_mesh_or_points
+        tri_mesh, transform_matrix, alignment_meta = align_mesh_or_points(tri_mesh)
+        print(f"[Pipeline] Geometry floor aligned to y=0 with {alignment_meta.get('floorInliersCount', 0)} inliers")
+    except Exception as e:
+        print(f"[Pipeline] Alignment warning, falling back to simple centering: {e}")
+        bounds = tri_mesh.bounds
+        if bounds is not None:
+            center = (bounds[0] + bounds[1]) / 2.0
+            tri_mesh.apply_translation(-center)
+
     bounds = tri_mesh.bounds
     if bounds is not None:
-        center = (bounds[0] + bounds[1]) / 2.0
-        tri_mesh.apply_translation(-center)
-        min_b = bounds[0] - center
-        max_b = bounds[1] - center
+        min_b = bounds[0]
+        max_b = bounds[1]
     else:
-        min_b = np.array([-1.0, -1.0, -1.0])
-        max_b = np.array([1.0, 1.0, 1.0])
+        min_b = np.array([-1.0, 0.0, -1.0])
+        max_b = np.array([1.0, 2.0, 1.0])
 
     # Export to GLB
     tri_mesh.export(output_glb_path, file_type="glb")
@@ -646,7 +656,8 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             "maxX": float(max_b[0]),
             "maxY": float(max_b[1]),
             "maxZ": float(max_b[2]),
-        }
+        },
+        "alignment": alignment_meta
     }
 
 def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, callback_url=None):
@@ -707,6 +718,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
             "vertices": recon_stats["vertices"],
             "fileSizeBytes": recon_stats["fileSizeBytes"],
             "reconstructionQuality": "COLMAP Structure-from-Motion & Multi-View Stereo",
-            "scaleMeters": f"{recon_stats['boundingBox']['maxX'] - recon_stats['boundingBox']['minX']:.1f}m × {recon_stats['boundingBox']['maxY'] - recon_stats['boundingBox']['minY']:.1f}m × {recon_stats['boundingBox']['maxZ'] - recon_stats['boundingBox']['minZ']:.1f}m"
+            "scaleMeters": f"{recon_stats['boundingBox']['maxX'] - recon_stats['boundingBox']['minX']:.1f}m × {recon_stats['boundingBox']['maxY'] - recon_stats['boundingBox']['minY']:.1f}m × {recon_stats['boundingBox']['maxZ'] - recon_stats['boundingBox']['minZ']:.1f}m",
+            "alignment": recon_stats.get("alignment", {})
         }
     }
