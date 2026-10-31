@@ -85,6 +85,44 @@ def kill_job_processes(job_id):
     print(f"[ProcessManager] Terminated {killed} processes for job {job_id}")
     return killed
 
+def format_process_error(bin_name, returncode, stdout, stderr, log_path=None):
+    hex_code = hex(returncode if returncode >= 0 else returncode + (1 << 32))
+    known_codes = {
+        "0xc0000005": "STATUS_ACCESS_VIOLATION (Crash: Memory Access Violation)",
+        "0xc0000409": "STATUS_STACK_BUFFER_OVERRUN (Crash: Stack Buffer Overrun / OOM)",
+        "0xc000013a": "STATUS_CONTROL_C_EXIT (Process terminated)",
+    }
+    code_desc = known_codes.get(hex_code.lower(), f"Exit code {returncode} ({hex_code})")
+
+    all_lines = ((stderr or "") + "\n" + (stdout or "")).splitlines()
+    error_lines = []
+    for line in all_lines:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+        # Skip pure COLMAP progress lines
+        if line_clean.startswith("I202") and any(k in line_clean for k in ["Processed file", "Creating SIFT", "Features:"]):
+            continue
+        lower_line = line_clean.lower()
+        if any(kw in lower_line for kw in ["check failed", "error", "fatal", "exception", "abort", "crash", "segmentation"]):
+            error_lines.append(line_clean)
+        elif line_clean.startswith("E202") or line_clean.startswith("F202"):
+            error_lines.append(line_clean)
+
+    if error_lines:
+        detail = " | ".join(error_lines[:2])
+    else:
+        # Check for thread warning or last non-progress line
+        warnings = [l.strip() for l in all_lines if l.strip().startswith("W202") and "feature_extraction.cc" in l]
+        if warnings:
+            detail = warnings[0]
+        else:
+            non_info = [l.strip() for l in all_lines if l.strip() and not (l.strip().startswith("I202") and "Processed file" in l.strip())]
+            detail = non_info[-1] if non_info else "Process exited abnormally."
+
+    msg = f"{bin_name} failed [{code_desc}]: {detail}"
+    return msg
+
 def run_command(cmd, job_id=None, timeout=300, log_path=None, env=None, check=True):
     """
     Executes an external command safely using subprocess.Popen with shell=False.
@@ -160,10 +198,8 @@ def run_command(cmd, job_id=None, timeout=300, log_path=None, env=None, check=Tr
             f.write(f"\n[EXIT_CODE] {proc.returncode}\n")
 
     if check and proc.returncode != 0:
-        tail_err = (stderr.strip() if stderr else '') or (stdout.strip() if stdout else '')
-        if len(tail_err) > 400:
-            tail_err = tail_err[-400:]
-        msg = f"Command '{Path(clean_cmd[0]).name} {clean_cmd[1] if len(clean_cmd) > 1 else ''}' failed with code {proc.returncode}: {tail_err}"
+        bin_label = f"{Path(clean_cmd[0]).name} {clean_cmd[1] if len(clean_cmd) > 1 and not clean_cmd[1].startswith('-') else ''}".strip()
+        msg = format_process_error(bin_label, proc.returncode, stdout, stderr, log_path=log_path)
         raise ServerProcessingException(msg, log_path=str(log_path) if log_path else None)
 
     class CompletedResult:
@@ -197,9 +233,9 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
     if target_fps is None:
         target_fps = float(os.environ.get("FRAME_FPS", 2))
     if max_frames is None:
-        max_frames = int(os.environ.get("MAX_FRAMES", 60))
+        max_frames = int(os.environ.get("MAX_FRAMES", 30))
     if max_image_size is None:
-        max_image_size = int(os.environ.get("MAX_IMAGE_SIZE", 1280))
+        max_image_size = int(os.environ.get("MAX_IMAGE_SIZE", 960))
 
     out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -248,28 +284,6 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
         extracted = sorted([str(p) for p in out_dir.glob("frame_*.png")])
 
     print(f"[FFmpeg] Successfully extracted {len(extracted)} frames from {Path(video_path).name}")
-    return extracted
-
-    if len(extracted) < 4:
-        raise InsufficientQualityException(
-            "INSUFFICIENT_RECONSTRUCTION_QUALITY",
-            f"Only {len(extracted)} frames could be extracted from the video.",
-            "Record at least 5 to 15 seconds continuously orbiting the room or subject."
-        )
-
-    # Sub-sample evenly if extracted frames exceed max_frames
-    if len(extracted) > max_frames:
-        step = len(extracted) / max_frames
-        indices = set(int(i * step) for i in range(max_frames))
-        for idx, fpath in enumerate(extracted):
-            if idx not in indices:
-                try:
-                    os.remove(fpath)
-                except OSError:
-                    pass
-        extracted = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
-
-    print(f"[FFmpeg] Successfully extracted {len(extracted)} frames from {os.path.basename(video_path)}")
     return extracted
 
 def check_early_rejection(frames_list):
@@ -360,61 +374,104 @@ def check_early_rejection(frames_list):
     print(f"[PreCheck] Early quality check PASSED: brightness={avg_brightness:.1f}, blur={np.mean(blur_scores):.1f}, keypoints={avg_keypoints:.1f}, motion={avg_motion:.3f}")
     return True
 
-def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=15.0):
+def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=20.0, max_frames=30):
     """
-    Filters out blurry, dark, and near-duplicate frames.
-    Uses Laplacian variance for blur detection and histogram comparison for duplicates.
+    Filters out near-black, blurry, duplicate, and low-texture frames before COLMAP.
+    - Near-black / dark frames: dropped if mean brightness < 20 or max pixel < 40
+    - Blurry frames: dropped if Laplacian variance < 15
+    - Low-texture frames: dropped if fast ORB keypoints < 50 (skipped, not fatal)
+    - Duplicate frames: dropped if histogram correlation > 0.995
+    - Sub-samples to at most max_frames (default 30) for safe memory usage
     """
-    os.makedirs(output_filtered_dir, exist_ok=True)
+    out_dir = Path(output_filtered_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
     accepted = []
     prev_hist = None
+    orb = cv2.ORB_create(nfeatures=500)
 
     for fpath in frames_list:
-        img = cv2.imread(fpath)
+        p = Path(fpath)
+        img = cv2.imread(str(p))
         if img is None:
+            print(f"[Filter] Could not read frame {p.name}, skipping")
             continue
         
-        # 1. Check brightness / exposure
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        brightness = np.mean(gray)
-        if brightness < min_brightness:
-            continue # Too dark
+        brightness = float(np.mean(gray))
+        max_pixel = float(np.max(gray))
 
-        # 2. Check blur (Laplacian variance)
-        var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        # 1. Reject black / near-black frames
+        if brightness < min_brightness or max_pixel < 40.0:
+            print(f"[Filter] Dropping near-black frame {p.name} (mean={brightness:.1f}, max={max_pixel:.1f})")
+            continue
+
+        # 2. Reject blurry frames (Laplacian variance)
+        var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if var < min_variance:
-            continue # Too blurry
+            print(f"[Filter] Dropping blurry frame {p.name} (sharpness={var:.1f} < {min_variance})")
+            continue
 
-        # 3. Check for duplicates / static frames
+        # 3. Reject low-texture frames (skipped, not fatal)
+        kps = orb.detect(gray, None)
+        if len(kps) < 50:
+            print(f"[Filter] Skipping low-feature frame {p.name} (keypoints={len(kps)} < 50)")
+            continue
+
+        # 4. Reject duplicate / static frames
         hist = cv2.calcHist([gray], [0], None, [64], [0, 256])
         cv2.normalize(hist, hist)
         if prev_hist is not None:
             similarity = cv2.compareHist(prev_hist, hist, cv2.HISTCMP_CORREL)
             if similarity > 0.995:
-                continue # Near duplicate frame, skip
+                print(f"[Filter] Skipping duplicate frame {p.name} (similarity={similarity:.3f})")
+                continue
         
-        # Accept frame
         prev_hist = hist
-        dest_name = os.path.basename(fpath)
-        dest_path = os.path.join(output_filtered_dir, dest_name)
-        shutil.copyfile(fpath, dest_path)
-        accepted.append(dest_path)
+        dest_path = out_dir / p.name
+        shutil.copyfile(str(p), str(dest_path))
+        accepted.append(str(dest_path))
 
     # Fallback: if blur filtering was slightly too aggressive but frames are valid,
-    # select evenly spaced original frames
-    if len(accepted) < 5 and len(frames_list) >= 5:
-        step = max(1, len(frames_list) // 20)
-        for idx in range(0, len(frames_list), step):
-            fpath = frames_list[idx]
-            dest_path = os.path.join(output_filtered_dir, f"fallback_{idx:04d}.png")
-            shutil.copyfile(fpath, dest_path)
-            accepted.append(dest_path)
+    # select evenly spaced original non-black frames
+    if len(accepted) < 4 and len(frames_list) >= 4:
+        print("[Filter] Quality filtering left < 4 frames; evaluating fallback non-black frames...")
+        non_black = []
+        for fpath in frames_list:
+            img = cv2.imread(fpath)
+            if img is not None:
+                g = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                if np.mean(g) >= 15.0 and np.max(g) >= 30.0:
+                    non_black.append(fpath)
+        if len(non_black) >= 4:
+            step = max(1, len(non_black) // 20)
+            for idx in range(0, len(non_black), step):
+                src_p = Path(non_black[idx])
+                dst_p = out_dir / f"fallback_{idx:04d}_{src_p.name}"
+                shutil.copyfile(str(src_p), str(dst_p))
+                accepted.append(str(dst_p))
 
+    # Cap accepted frames at max_frames (e.g. 30) for safe memory usage
+    if len(accepted) > max_frames:
+        print(f"[Filter] Sub-sampling {len(accepted)} accepted frames down to max_frames={max_frames}")
+        step = len(accepted) / max_frames
+        indices = set(int(i * step) for i in range(max_frames))
+        kept = []
+        for idx, fpath in enumerate(accepted):
+            if idx in indices and len(kept) < max_frames:
+                kept.append(fpath)
+            else:
+                try:
+                    os.remove(fpath)
+                except OSError:
+                    pass
+        accepted = kept
+
+    print(f"[Filter] Accepted {len(accepted)} high-quality frames for 3D reconstruction")
     if len(accepted) < 4:
         raise InsufficientQualityException(
             "INSUFFICIENT_RECONSTRUCTION_QUALITY",
-            "Too few clear, overlapping video frames remained after quality filtering. The footage is too dark or contains excessive motion blur.",
-            "Record slowly with smooth camera movement and ample lighting."
+            f"Only {len(accepted)} quality frames remained after dropping black, blurry, or low-texture frames.",
+            "Record slowly with smooth camera movement, rich surface detail, and ample lighting."
         )
 
     return accepted
@@ -470,7 +527,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
 
     img_dir = Path(image_dir).resolve()
 
-    # 1. Feature Extraction (SIFT) — relaxed settings for mobile video
+    # 1. Feature Extraction (SIFT) — memory-safe settings (2 threads, 960px max size)
     cmd_extract = [
         colmap_bin, "feature_extractor",
         "--database_path", str(database_path),
@@ -478,76 +535,67 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--ImageReader.single_camera", "1",
         "--ImageReader.camera_model", "SIMPLE_RADIAL",
         "--FeatureExtraction.use_gpu", "0",
-        "--SiftExtraction.max_num_features", "8192",
+        "--FeatureExtraction.num_threads", "2",
+        "--FeatureExtraction.max_image_size", "960",
+        "--SiftExtraction.max_num_features", "4000",
         "--SiftExtraction.peak_threshold", "0.003",
         "--SiftExtraction.edge_threshold", "10",
     ]
-    res = run_command(cmd_extract, job_id=job_id, timeout=300, log_path=log_file, check=False)
+    res = run_command(cmd_extract, job_id=job_id, timeout=600, log_path=log_file, check=False)
     print(f"[COLMAP] feature_extractor returncode={res.returncode}")
     if res.returncode != 0:
-        tail_err = (res.stderr.strip() if res.stderr else '') or (res.stdout.strip() if res.stdout else '')
-        if len(tail_err) > 400:
-            tail_err = tail_err[-400:]
-        raise ServerProcessingException(
-            f"COLMAP feature extraction failed: {tail_err or 'Unknown process error'}",
-            log_path=str(log_file) if log_file else None
-        )
+        err_msg = format_process_error("COLMAP feature_extractor", res.returncode, res.stdout, res.stderr, log_path=log_file)
+        raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
-    # 2a. Sequential matching (best for video frames)
+    # 2a. Sequential matching (best for video frames, capped at 2 threads)
     matched = False
     cmd_match = [
         colmap_bin, "sequential_matcher",
         "--database_path", str(database_path),
         "--FeatureMatching.use_gpu", "0",
+        "--FeatureMatching.num_threads", "2",
+        "--SequentialMatching.num_threads", "2",
         "--SequentialMatching.overlap", "15",
         "--SequentialMatching.quadratic_overlap", "1",
     ]
-    res = run_command(cmd_match, job_id=job_id, timeout=300, log_path=log_file, check=False)
+    res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, check=False)
     print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
     if res.returncode == 0:
         matched = True
 
-    # 2b. Exhaustive matching fallback
+    # 2b. Exhaustive matching fallback (capped at 2 threads)
     if not matched:
         print("[COLMAP] Sequential matching non-zero exit, running exhaustive matcher fallback...")
         cmd_match_ex = [
             colmap_bin, "exhaustive_matcher",
             "--database_path", str(database_path),
             "--FeatureMatching.use_gpu", "0",
+            "--FeatureMatching.num_threads", "2",
         ]
-        res_ex = run_command(cmd_match_ex, job_id=job_id, timeout=300, log_path=log_file, check=False)
+        res_ex = run_command(cmd_match_ex, job_id=job_id, timeout=600, log_path=log_file, check=False)
         print(f"[COLMAP] exhaustive_matcher returncode={res_ex.returncode}")
         if res_ex.returncode != 0:
-            tail_err = (res_ex.stderr.strip() if res_ex.stderr else '') or (res_ex.stdout.strip() if res_ex.stdout else '')
-            if len(tail_err) > 400:
-                tail_err = tail_err[-400:]
-            raise ServerProcessingException(
-                f"COLMAP feature matching failed: {tail_err or 'Unknown process error'}",
-                log_path=str(log_file) if log_file else None
-            )
+            err_msg = format_process_error("COLMAP feature matching", res_ex.returncode, res_ex.stdout, res_ex.stderr, log_path=log_file)
+            raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
-    # 3. Incremental Mapper — relaxed thresholds for indoor/mobile video
+    # 3. Incremental Mapper — relaxed thresholds for indoor/mobile video, capped at 2 threads
     cmd_mapper = [
         colmap_bin, "mapper",
         "--database_path", str(database_path),
         "--image_path", str(img_dir),
         "--output_path", str(sparse_path),
+        "--Mapper.num_threads", "2",
         "--Mapper.min_num_matches", "8",
         "--Mapper.init_min_num_inliers", "50",
         "--Mapper.abs_pose_min_num_inliers", "15",
         "--Mapper.abs_pose_min_inlier_ratio", "0.1",
         "--Mapper.max_extra_param", "1",
     ]
-    res = run_command(cmd_mapper, job_id=job_id, timeout=600, log_path=log_file, check=False)
+    res = run_command(cmd_mapper, job_id=job_id, timeout=1200, log_path=log_file, check=False)
     print(f"[COLMAP] mapper returncode={res.returncode}")
     if res.returncode != 0:
-        tail_err = (res.stderr.strip() if res.stderr else '') or (res.stdout.strip() if res.stdout else '')
-        if len(tail_err) > 400:
-            tail_err = tail_err[-400:]
-        raise ServerProcessingException(
-            f"COLMAP incremental mapper failed: {tail_err or 'Mapper error'}",
-            log_path=str(log_file) if log_file else None
-        )
+        err_msg = format_process_error("COLMAP incremental mapper", res.returncode, res.stdout, res.stderr, log_path=log_file)
+        raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
     # Find all reconstructed submodels in sparse/ and pick the BEST one (most 3D points)
     subdirs = [

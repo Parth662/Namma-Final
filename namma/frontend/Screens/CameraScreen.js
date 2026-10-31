@@ -411,9 +411,23 @@ export default function CameraScreen() {
           }
 
           ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+          let sample = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
+          let brightness = (sample[0] + sample[1] + sample[2]) / 3;
 
-          const sample = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
+          // If frame captured pitch-black, retry once with small seek forward to avoid dark camera opening
+          if (brightness < 12 && Number.isFinite(time) && duration > 1.5) {
+            const retryTime = Math.min(time + 0.5, Math.max(0.2, duration - 0.1));
+            tempVideo.currentTime = retryTime;
+            await new Promise((res) => {
+              let timer = setTimeout(res, 400);
+              const handler = () => { clearTimeout(timer); tempVideo.removeEventListener('seeked', handler); res(); };
+              tempVideo.addEventListener('seeked', handler);
+            });
+            ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
+            sample = ctx.getImageData(canvas.width / 2, canvas.height / 2, 1, 1).data;
+          }
+
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
           frames.push({
             index: i,
             time: (Number.isFinite(time) ? time.toFixed(1) : i) + 's',
