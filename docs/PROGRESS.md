@@ -105,3 +105,21 @@
 - [x] **Step 7.5:** Finalize documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/GPU_DEPLOY.md`, `docs/QUALITY.md`.
 - [x] **Step 7.6:** Create `docker-compose.yml` for optional containerized deployments.
 - [x] **Step 7.7:** Final git commit on `feature/namma-backend` and final report.
+
+---
+
+## Reconstruction Engine & Windows Execution Hardening (November 1, 2026)
+- **Direct Binary Spawning:** Replaced all `.bat` wrapper invocations with direct `colmap.exe` execution using `subprocess.Popen(..., shell=False)` and `pathlib.Path.resolve()`. Eliminated `cmd.exe` space tokenization bugs on `namma F` path.
+- **Environment Auto-Configuration:** Automatically injects `tools/colmap/bin` into `PATH` and `tools/colmap/plugins` into `QT_PLUGIN_PATH` dynamically on process spawn.
+- **Separation of Quality Issues vs Server Errors:**
+  - `ServerProcessingException`: Raised for command/spawn/path execution failures (returncode != 0, missing binary, OS errors); displays "Server processing error" in the UI with exact log path.
+  - `InsufficientQualityException`: Reserved exclusively for genuine photogrammetric insufficiency (registered poses < 3, points < 30, blur, lack of texture); displays "Reconstruction Quality Issue" with field recording tips.
+- **Diagnostic Logging:** All external commands append stdout/stderr into `pipeline.log` per project.
+- **Small Input Benchmark (10 frames, 640px):**
+  - Frame Extraction: 2.90s
+  - Quality Pre-checks: 0.73s
+  - COLMAP SfM (features, matching, mapping): 9.54s (4 registered camera poses)
+  - Mesh Reconstruction & GLB Export: 7.37s (62 vertices, floor-aligned, navgrid generated)
+  - Peak Process RAM (inc. subprocesses): 642.1 MB
+  - Peak System RAM: 5643.2 MB (71.8%)
+
