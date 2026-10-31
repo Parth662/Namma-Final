@@ -76,7 +76,7 @@
 ---
 
 ### Phase 5 — POIs + Search
-- [ ] **Step 5.1:** MongoDB model `pois`: `{projectId, name, category, description, tags[], position, navPoint, createdBy, createdAt}` with text index.
+- [x] **Step 5.1:** MongoDB model `pois`: `{projectId, name, category, description, tags[], position, navPoint, createdBy, createdAt}` with text index.
 - [ ] **Step 5.2:** CRUD endpoints with ownership checks (public read for demo).
 - [ ] **Step 5.3:** Snap POIs to nearest walkable grid cell (`navPoint`); clear error if outside boundaries.
 - [ ] **Step 5.4:** `GET /api/projects/:id/pois?q=` ranked search: text index + prefix/fuzzy fallback.
