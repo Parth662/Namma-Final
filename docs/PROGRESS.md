@@ -67,7 +67,7 @@
 - [x] **Step 4.1:** Python module `navigation/`: RANSAC floor-plane fit, rotate so floor is `y=0` and up is `+y`, center model; store transform.
 - [x] **Step 4.2:** Scale calibration: `POST /api/projects/:id/calibrate {p1, p2, realDistanceMeters}` → store `metersPerUnit` (fallback: door height ≈ 2.0m).
 - [x] **Step 4.3:** Occupancy grid: slice geometry between 0.2m and 1.6m above floor → obstacle footprint → 5cm raster grid → inflate by agent radius (0.25m).
-- [ ] **Step 4.4:** Pathfinding: 8-connected A* with path smoothing (string-pulling/Theta*). Return polyline, distance in meters, walking ETA.
+- [x] **Step 4.4:** Pathfinding: 8-connected A* with path smoothing (string-pulling/Theta*). Return polyline, distance in meters, walking ETA.
 - [ ] **Step 4.5:** Export simplified wall segments for 2D mini-map.
 - [ ] **Step 4.6:** Node endpoints: `GET /api/projects/:id/navgrid`, `GET /api/projects/:id/path?from=x,y,z&to=x,y,z` (and POI snapping).
 - [ ] **Step 4.7:** Auto-run navigation generation at end of reconstruction & precompute for demo scene.
