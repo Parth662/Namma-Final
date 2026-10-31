@@ -37,6 +37,7 @@ export const getDemoProject = async (req, res) => {
           },
           isPublic: true,
           isDemo: true,
+          source: 'demo',
         },
       });
     }
@@ -44,7 +45,10 @@ export const getDemoProject = async (req, res) => {
     return res.status(200).json({
       success: true,
       isDemo: true,
-      data: demoProj,
+      data: {
+        ...demoProj,
+        source: 'demo',
+      },
     });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

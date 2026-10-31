@@ -748,6 +748,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
 
     return {
         "success": True,
+        "source": "photogrammetry",
         "modelUrl": f"/storage/projects/{project_id}/final/scene.glb",
         "thumbnailUrl": f"/storage/projects/{project_id}/preview/thumbnail.jpg",
         "finalModelPath": output_glb_path,

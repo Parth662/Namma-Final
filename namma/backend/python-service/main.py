@@ -120,9 +120,11 @@ def reconstruct(req: ReconstructRequest):
     processing_dir = os.path.abspath(req.processingDir) if req.processingDir and not req.processingDir.startswith(".") else DEFAULT_PROCESSING_DIR
 
     try:
-        # Check for mock / pre-baked testing mode (preserves system memory)
-        if os.environ.get("MOCK_RECONSTRUCTION") == "1" or "mock" in req.videoPath.lower() or "temp_test" in req.videoPath.lower():
-            print(f"[PythonEngine] Using pre-baked sample digital twin for memory-safe testing...")
+        # Only automated unit tests (e.g. temp_test.mp4 in test_phase1_phase2.js) are allowed to use stub mode
+        # Real user videos must NEVER return synthetic/fallback scenes as real reconstructions
+        is_automated_test = "temp_test" in req.videoPath.lower() and os.environ.get("MOCK_RECONSTRUCTION") == "1"
+        if is_automated_test:
+            print(f"[PythonEngine] Automated test detected ({req.videoPath}); using stub for unit test...")
             final_model_dir = os.path.join(storage_dir, "projects", str(req.projectId), "final")
             preview_dir = os.path.join(storage_dir, "projects", str(req.projectId), "preview")
             os.makedirs(final_model_dir, exist_ok=True)
@@ -152,6 +154,7 @@ def reconstruct(req: ReconstructRequest):
 
             return {
                 "success": True,
+                "source": "demo",
                 "modelUrl": f"/storage/projects/{req.projectId}/final/scene.glb",
                 "thumbnailUrl": f"/storage/projects/{req.projectId}/preview/thumbnail.jpg",
                 "finalModelPath": dst_glb,
@@ -166,7 +169,7 @@ def reconstruct(req: ReconstructRequest):
                     "triangles": 24800,
                     "vertices": 12400,
                     "fileSizeBytes": os.path.getsize(dst_glb) if os.path.exists(dst_glb) else 206960,
-                    "reconstructionQuality": "COLMAP Structure-from-Motion (Pre-baked / Mock Mode)",
+                    "reconstructionQuality": "COLMAP Structure-from-Motion (Automated Test Stub)",
                     "scaleMeters": "5.0m × 2.7m × 6.0m"
                 }
             }

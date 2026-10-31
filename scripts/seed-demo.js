@@ -59,6 +59,7 @@ const seedDemo = async () => {
         currentStage: 'DIGITAL TWIN READY',
         isDemo: true,
         isPublic: true,
+        source: 'demo',
         modelUrl: '/storage/projects/sample_digital_twin/final/scene.glb',
         thumbnailUrl: '/storage/projects/sample_digital_twin/preview/thumbnail.jpg',
         boundingBox: {
@@ -89,6 +90,7 @@ const seedDemo = async () => {
       demoProject.modelUrl = '/storage/projects/sample_digital_twin/final/scene.glb';
       demoProject.thumbnailUrl = '/storage/projects/sample_digital_twin/preview/thumbnail.jpg';
       demoProject.metersPerUnit = 1.0;
+      demoProject.source = 'demo';
       await demoProject.save();
       console.log(`✓ Updated Demo Project (ID: ${demoProject._id})`);
     }

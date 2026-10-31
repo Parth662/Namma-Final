@@ -92,6 +92,12 @@ const projectSchema = new mongoose.Schema(
       type: String,
       default: 'glb',
     },
+    source: {
+      type: String,
+      enum: ['photogrammetry', 'demo'],
+      default: 'photogrammetry',
+      index: true,
+    },
     isDemo: {
       type: Boolean,
       default: false,

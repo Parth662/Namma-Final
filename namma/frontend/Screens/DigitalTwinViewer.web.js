@@ -77,6 +77,7 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
   const [resolvedProjectState, setResolvedProjectState] = useState(projectData || null);
   const resolvedProject = resolvedProjectState || projectData || {};
   const projectId = resolvedProject._id || resolvedProject.id || 'demo';
+  const isDemo = resolvedProject.source === 'demo' || Boolean(resolvedProject.isDemo) || projectId === 'sample_digital_twin' || projectId === 'demo';
 
   const showToast = (msg) => {
     setNotice(msg);
@@ -786,11 +787,27 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
               <Text style={styles.backBtnText}>‹ Back</Text>
             </TouchableOpacity>
             <View style={styles.headerTitleWrap}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {resolvedProject.name || 'Photogrammetric Digital Twin'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                  {resolvedProject.name || 'Photogrammetric Digital Twin'}
+                </Text>
+                <View
+                  style={{
+                    backgroundColor: isDemo ? 'rgba(245, 158, 11, 0.2)' : 'rgba(14, 165, 233, 0.2)',
+                    borderColor: isDemo ? '#f59e0b' : '#38bdf8',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    paddingHorizontal: 5,
+                    paddingVertical: 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: isDemo ? '#fbbf24' : '#38bdf8' }}>
+                    {isDemo ? 'Demo' : 'Photogrammetry'}
+                  </Text>
+                </View>
+              </View>
               <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {resolvedProject.locationName || '3D Reconstructed Environment'}
+                {resolvedProject.locationName || (isDemo ? 'Pre-baked Reference Scene' : '3D Reconstructed Environment')}
               </Text>
             </View>
           </View>
@@ -842,6 +859,58 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
             <View style={styles.miniMapWrapper}>
               <canvas ref={miniMapCanvasRef} width={160} height={160} style={{ borderRadius: 8, border: '1px solid #334155' }} />
               <Text style={styles.miniMapLabel}>2D NAVIGATION RADAR</Text>
+            </View>
+          )}
+
+          {/* Metrics Drawer */}
+          {showMetadata && (
+            <View style={styles.metricsCard}>
+              <View style={styles.metricsHeader}>
+                <Text style={styles.metricsTitle}>📊 3D Scene Metrics</Text>
+                <TouchableOpacity onPress={() => setShowMetadata(false)}>
+                  <Text style={{ color: '#94a3b8', fontSize: 16 }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Source Mode:</Text>
+                <Text style={[styles.metricsValue, { color: isDemo ? '#fbbf24' : '#38bdf8' }]}>
+                  {isDemo ? '🏛️ Pre-baked Demo Scene' : '📸 Real Photogrammetry'}
+                </Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Frames Used:</Text>
+                <Text style={styles.metricsValue}>
+                  {resolvedProject.metadata?.registeredFrames || modelStats?.cameraPoses || '0'} / {resolvedProject.metadata?.totalExtractedFrames || '—'}
+                </Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Registered Images:</Text>
+                <Text style={styles.metricsValue}>
+                  {resolvedProject.metadata?.registeredFrames || modelStats?.cameraPoses || '0'}
+                </Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Sparse 3D Points:</Text>
+                <Text style={styles.metricsValue}>
+                  {(resolvedProject.metadata?.points3D || 0).toLocaleString()} pts
+                </Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Mesh Triangles:</Text>
+                <Text style={styles.metricsValue}>{modelStats?.triangles || '0'}</Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Mesh Vertices:</Text>
+                <Text style={styles.metricsValue}>{modelStats?.vertices || '0'}</Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Dimensions:</Text>
+                <Text style={styles.metricsValue}>{modelStats?.bounds || '—'}</Text>
+              </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Metric Scale:</Text>
+                <Text style={styles.metricsValue}>1 unit = {resolvedProject.metersPerUnit || 1.0}m</Text>
+              </View>
             </View>
           )}
 
@@ -1082,4 +1151,38 @@ const styles = StyleSheet.create({
   dialogPrimaryBtnText: { color: '#ffffff', fontWeight: '700', fontSize: 12 },
   dialogSecondaryBtn: { flex: 1, backgroundColor: '#334155', paddingVertical: 8, borderRadius: 6, alignItems: 'center' },
   dialogSecondaryBtnText: { color: '#94a3b8', fontWeight: '600', fontSize: 12 },
+  metricsCard: {
+    position: 'absolute',
+    top: 14,
+    right: 14,
+    width: 290,
+    backgroundColor: 'rgba(15, 23, 42, 0.96)',
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+    zIndex: 30,
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+  },
+  metricsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10,
+    paddingBottom: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  metricsTitle: { color: '#f8fafc', fontWeight: '700', fontSize: 13 },
+  metricsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  metricsLabel: { color: '#94a3b8', fontSize: 11 },
+  metricsValue: { color: '#f1f5f9', fontSize: 11, fontWeight: '600' },
 });

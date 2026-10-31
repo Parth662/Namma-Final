@@ -309,11 +309,27 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
               <Text style={styles.backBtnText}>‹ Back</Text>
             </TouchableOpacity>
             <View style={styles.headerTitleWrap}>
-              <Text style={styles.headerTitle} numberOfLines={1}>
-                {sampleProject.name || 'Photogrammetric Digital Twin'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.headerTitle} numberOfLines={1}>
+                  {sampleProject.name || 'Photogrammetric Digital Twin'}
+                </Text>
+                <View
+                  style={{
+                    backgroundColor: (sampleProject.source === 'demo' || sampleProject.isDemo) ? 'rgba(245, 158, 11, 0.2)' : 'rgba(14, 165, 233, 0.2)',
+                    borderColor: (sampleProject.source === 'demo' || sampleProject.isDemo) ? '#f59e0b' : '#38bdf8',
+                    borderWidth: 1,
+                    borderRadius: 4,
+                    paddingHorizontal: 5,
+                    paddingVertical: 1,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: (sampleProject.source === 'demo' || sampleProject.isDemo) ? '#fbbf24' : '#38bdf8' }}>
+                    {(sampleProject.source === 'demo' || sampleProject.isDemo) ? 'Demo' : 'Photogrammetry'}
+                  </Text>
+                </View>
+              </View>
               <Text style={styles.headerSubtitle} numberOfLines={1}>
-                {sampleProject.locationName || '3D Reconstructed Environment'}
+                {sampleProject.locationName || ((sampleProject.source === 'demo' || sampleProject.isDemo) ? 'Pre-baked Reference Model' : '3D Reconstructed Environment')}
               </Text>
             </View>
           </View>
@@ -407,6 +423,12 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           {showMetadata && !errorState && (
             <View style={styles.hudCard}>
               <Text style={styles.hudTitle}>Reconstruction Metrics</Text>
+              <View style={styles.statRow}>
+                <Text style={styles.statLabel}>Source:</Text>
+                <Text style={styles.statValHighlight}>
+                  {(sampleProject.source === 'demo' || sampleProject.isDemo) ? 'Pre-baked Demo Scene' : 'Real Photogrammetry'}
+                </Text>
+              </View>
               <View style={styles.statRow}>
                 <Text style={styles.statLabel}>Points:</Text>
                 <Text style={styles.statVal}>{sampleProject.metadata?.points3D || sampleProject.stats?.pointCount || '—'}</Text>

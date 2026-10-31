@@ -130,6 +130,7 @@ export const startReconstructionWorker = () => {
         project.status = 'completed';
         project.progress = 100;
         project.currentStage = 'DIGITAL TWIN READY';
+        project.source = response.source || 'photogrammetry';
         project.modelUrl = response.modelUrl || `/storage/projects/${projectId}/final/scene.glb`;
         project.thumbnailUrl = response.thumbnailUrl || `/storage/projects/${projectId}/preview/thumbnail.jpg`;
         if (response.boundingBox) project.boundingBox = response.boundingBox;
@@ -141,6 +142,7 @@ export const startReconstructionWorker = () => {
         reconJob.currentStage = 'DIGITAL TWIN READY';
         reconJob.completedAt = new Date();
         reconJob.finalModelPath = response.finalModelPath;
+        if (response.metadata) reconJob.metrics = response.metadata;
         await reconJob.save();
 
         const durationSec = (reconJob.completedAt.getTime() - (reconJob.startedAt || new Date()).getTime()) / 1000;

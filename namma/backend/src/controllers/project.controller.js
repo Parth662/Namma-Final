@@ -189,6 +189,8 @@ export const getProjectModel = async (req, res, next) => {
     res.status(200).json({
       projectId: project._id,
       status: project.status,
+      source: project.source || (project.isDemo ? 'demo' : 'photogrammetry'),
+      isDemo: Boolean(project.isDemo),
       model: {
         format: project.outputType || 'glb',
         url: project.modelUrl,
