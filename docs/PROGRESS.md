@@ -102,6 +102,6 @@
 - [x] **Step 7.2:** Security review: sanitize paths, fixed-argument subprocess arrays, delete project file & DB scrub.
 - [x] **Step 7.3:** Error handling review: human-readable messages everywhere.
 - [x] **Step 7.4:** Run full test suite and fix regressions. *(All Python & Node test suites passed 100%; heavy load-test deferred per memory safety rules)*
-- [ ] **Step 7.5:** Finalize documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/GPU_DEPLOY.md`, `docs/QUALITY.md`.
+- [x] **Step 7.5:** Finalize documentation: `README.md`, `docs/ARCHITECTURE.md`, `docs/GPU_DEPLOY.md`, `docs/QUALITY.md`.
 - [ ] **Step 7.6:** Create `docker-compose.yml` for optional containerized deployments.
 - [ ] **Step 7.7:** Final git commit on `feature/namma-backend` and final report.

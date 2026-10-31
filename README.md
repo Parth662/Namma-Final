@@ -127,6 +127,38 @@ powershell -ExecutionPolicy Bypass -File scripts/dev.ps1 -CheckOnly
 
 ---
 
+## Offline Demo Mode & Pre-Baked Digital Twin
+
+For rapid offline testing and zero-overhead demonstrations without running COLMAP:
+1. **Seed Offline Demo Scene & POIs:**
+   ```powershell
+   node scripts/seed-demo.js
+   ```
+   This populates MongoDB with the **Namma Space Innovation Quad** pre-baked model (`scene.glb`), 7 realistic spatial POIs, and precomputed 2D navigation grid.
+2. **Access Offline Demo:**
+   - API: `GET http://localhost:5001/api/demo` (unauthenticated)
+   - Frontend: Click **"🎮 Try Demo Mode"** in the viewer header to instantly explore the 3D twin, 2D mini-map, and walking routes.
+
+---
+
+## Running the Automated Test Suites
+
+```powershell
+# 1. Python Floor Alignment, Occupancy Grid & A* Pathfinding Unit Tests
+$env:PYTHONPATH = "namma\backend\python-service"; & "namma\backend\python-service\venv\Scripts\python.exe" -m unittest namma/backend/python-service/tests/test_navigation.py
+
+# 2. Phase 1 & 2 Core Platform Integration Tests
+node namma/backend/test_phase1_phase2.js
+
+# 3. Phase 4 Navigation, Line-of-Sight Smoothing, and Scale Calibration Tests
+node namma/backend/test_phase4_navigation.js
+
+# 4. Phase 5 Points of Interest (POIs) CRUD & Ranked Text Search Tests
+node namma/backend/test_phase5_poi.js
+```
+
+---
+
 ## Memory-Safe Development & Testing
 
 When running on resource-constrained devices (e.g. 8 GB RAM integrated graphics):
