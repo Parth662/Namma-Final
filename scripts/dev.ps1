@@ -165,13 +165,35 @@ if ((-not $expoRunning) -and (-not $CheckOnly) -and (-not $NoFrontend)) {
 
 Write-Host ""
 Write-Host "----------------------------------------------------------" -ForegroundColor Cyan
+
+$lanIps = @()
+try {
+    $configs = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled = True" -ErrorAction SilentlyContinue
+    foreach ($cfg in $configs) {
+        foreach ($ip in $cfg.IPAddress) {
+            if ($ip -match '^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)') {
+                $lanIps += $ip
+            }
+        }
+    }
+} catch {}
+
 if ($CheckOnly) {
     Write-Host "Health check completed." -ForegroundColor Cyan
 } else {
     Write-Host "All stack services are initialized." -ForegroundColor Green
-    Write-Host "Node API:     http://127.0.0.1:5001"
+    Write-Host "Node API:     http://localhost:5001"
     Write-Host "Python API:   http://127.0.0.1:5002"
-    Write-Host "Expo Web:     http://127.0.0.1:8081"
+    Write-Host "Expo Web:     http://localhost:8081"
+    if ($lanIps.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Phone / LAN Access (Current Network):" -ForegroundColor Yellow
+        foreach ($ip in $lanIps) {
+            Write-Host "  Open on phone: http://${ip}:8081" -ForegroundColor Yellow
+            Write-Host "  Node API:      http://${ip}:5001/api/health" -ForegroundColor Yellow
+        }
+        Write-Host "  [WARN] Laptop LAN IP changes when switching Wi-Fi networks." -ForegroundColor DarkYellow
+    }
 }
 Write-Host "----------------------------------------------------------" -ForegroundColor Cyan
 Write-Host ""

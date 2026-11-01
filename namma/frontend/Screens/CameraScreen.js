@@ -1411,6 +1411,9 @@ export default function CameraScreen() {
                 <Text style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#f87171', fontSize: 11, fontWeight: '700', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 4, marginTop: 4 }}>
                   {conversionError?.code || 'INSUFFICIENT_RECONSTRUCTION_QUALITY'}
                 </Text>
+                <Text style={{ color: '#94a3b8', fontSize: 11, marginTop: 6, fontFamily: 'monospace' }}>
+                  Server: {conversionError?.url || getBackendHost()}
+                </Text>
               </View>
               <Text style={{ color: '#cbd5e1', fontSize: 13, textAlign: 'center', lineHeight: 19, marginBottom: 16 }}>
                 {conversionError?.reason}

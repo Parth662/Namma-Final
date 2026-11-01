@@ -12,12 +12,18 @@ if (typeof globalThis !== 'undefined' && typeof globalThis.document === 'undefin
   };
 }
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { View, StyleSheet } from 'react-native';
 import CameraScreen from './Screens/CameraScreen';
+import { getBackendBaseUrl } from './src/api/client';
 
 export default function App() {
+  useEffect(() => {
+    const url = getBackendBaseUrl();
+    console.log(`[Namma App] Startup initialized. Connected backend base URL: ${url}`);
+  }, []);
+
   return (
     <View style={styles.safeArea}>
       <StatusBar style="light" />

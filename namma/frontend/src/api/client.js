@@ -1,37 +1,48 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 let cachedToken = null;
 
 export const getBackendBaseUrl = () => {
-  // Explicit override if provided
+  // 1. Explicit override if provided and non-empty
   const overrideUrl = process.env.EXPO_PUBLIC_API_URL;
-  if (overrideUrl) {
+  if (overrideUrl && overrideUrl.trim() !== '') {
     let clean = overrideUrl.includes(':5002') ? overrideUrl.replace(':5002', ':5001') : overrideUrl;
     return clean.replace(/\/+$/, '');
   }
 
-  // On Web: derive from the page's own host (e.g. localhost:8081 -> localhost:5001, 192.168.x.x:8081 -> 192.168.x.x:5001)
+  // 2. On Web: the Node API is plain HTTP.
+  // Use http://${window.location.hostname}:5001 (never https unless EXPO_PUBLIC_API_URL explicitly says so).
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
-    const protocol = window.location.protocol || 'http:';
     const hostname = window.location.hostname || 'localhost';
-    return `${protocol}//${hostname}:5001`;
+    return `http://${hostname}:5001`;
   }
 
-  // Native mobile fallback
-  let nativeUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
-  if (nativeUrl) {
-    if (nativeUrl.includes(':5002')) {
-      nativeUrl = nativeUrl.replace(':5002', ':5001');
+  // 3. On Native / Expo Go: derive host from Constants.expoConfig?.hostUri (strip the port)
+  const hostUri = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost || Constants.manifest?.debuggerHost;
+  if (hostUri) {
+    const laptopIp = hostUri.split(':')[0];
+    if (laptopIp) {
+      return `http://${laptopIp}:5001`;
     }
-    return nativeUrl.replace(/\/+$/, '');
   }
 
+  // 4. Android Emulator fallback
   if (Platform.OS === 'android') {
     return 'http://10.0.2.2:5001';
   }
 
+  // 5. Default fallback
   return 'http://localhost:5001';
 };
+
+// Print resolved base URL at app startup (console)
+try {
+  const initialBaseUrl = getBackendBaseUrl();
+  console.log(`[Namma Client] Resolved backend base URL: ${initialBaseUrl}`);
+} catch (e) {
+  console.warn('[Namma Client] Error resolving initial base URL:', e);
+}
 
 export const setAuthToken = (token) => {
   cachedToken = token;
