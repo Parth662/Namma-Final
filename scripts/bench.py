@@ -27,16 +27,19 @@ except ImportError:
     sys.exit(1)
 
 # Memory & Timeout Guards (Rule 2)
-MAX_RAM_GB = 6.5
-MAX_TIME_SECONDS = 480  # 8 minutes
+MAX_PROCESS_RAM_GB = 6.0
+MIN_AVAILABLE_RAM_MB = 200  # Abort if available system memory falls below 200 MB to avoid system crash
+MAX_TIME_SECONDS = 480      # 8 minutes
 SAMPLE_INTERVAL_SEC = 0.5
 
 
 class MemoryMonitor:
-    def __init__(self, max_ram_gb=MAX_RAM_GB, max_time_sec=MAX_TIME_SECONDS):
-        self.max_ram_bytes = max_ram_gb * 1024 * 1024 * 1024
+    def __init__(self, max_proc_ram_gb=MAX_PROCESS_RAM_GB, min_avail_mb=MIN_AVAILABLE_RAM_MB, max_time_sec=MAX_TIME_SECONDS):
+        self.max_proc_ram_bytes = max_proc_ram_gb * 1024 * 1024 * 1024
+        self.min_avail_bytes = min_avail_mb * 1024 * 1024
         self.max_time_sec = max_time_sec
-        self.peak_ram_bytes = 0
+        self.peak_proc_bytes = 0
+        self.peak_sys_used_bytes = 0
         self.start_time = time.time()
         self.stop_requested = False
         self.aborted = False
@@ -54,20 +57,45 @@ class MemoryMonitor:
         if self._thread:
             self._thread.join(timeout=2.0)
 
+    def _get_process_tree_memory(self):
+        try:
+            current = psutil.Process()
+            total_rss = current.memory_info().rss
+            for child in current.children(recursive=True):
+                try:
+                    total_rss += child.memory_info().rss
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            return total_rss
+        except Exception:
+            return 0
+
     def _monitor_loop(self):
         while not self.stop_requested:
             try:
                 vm = psutil.virtual_memory()
-                used = vm.used
+                proc_bytes = self._get_process_tree_memory()
+                sys_used = vm.total - vm.available
+
                 with self.lock:
-                    if used > self.peak_ram_bytes:
-                        self.peak_ram_bytes = used
+                    if proc_bytes > self.peak_proc_bytes:
+                        self.peak_proc_bytes = proc_bytes
+                    if sys_used > self.peak_sys_used_bytes:
+                        self.peak_sys_used_bytes = sys_used
 
                     elapsed = time.time() - self.start_time
-                    if used > self.max_ram_bytes:
+
+                    if vm.available < self.min_avail_bytes:
                         self.aborted = True
                         self.abort_reason = (
-                            f"Peak RAM exceeded safety threshold: {used / (1024**3):.2f} GB > {MAX_RAM_GB} GB"
+                            f"System free RAM depleted below safety limit: {vm.available / (1024**2):.1f} MB < {self.min_avail_bytes / (1024**2):.0f} MB"
+                        )
+                        break
+
+                    if proc_bytes > self.max_proc_ram_bytes:
+                        self.aborted = True
+                        self.abort_reason = (
+                            f"Pipeline process RAM exceeded safety threshold: {proc_bytes / (1024**3):.2f} GB > {MAX_PROCESS_RAM_GB} GB"
                         )
                         break
 
@@ -83,7 +111,15 @@ class MemoryMonitor:
 
     def get_peak_mb(self):
         with self.lock:
-            return self.peak_ram_bytes / (1024 * 1024)
+            # Report pipeline process peak (and sys peak for context)
+            return self.peak_proc_bytes / (1024 * 1024)
+
+    def peak_ram_mb(self):
+        return self.get_peak_mb()
+
+    def peak_sys_mb(self):
+        with self.lock:
+            return self.peak_sys_used_bytes / (1024 * 1024)
 
 
 def get_free_ram_mb():
@@ -91,21 +127,25 @@ def get_free_ram_mb():
 
 
 def count_mesh_components(mesh_path):
-    """Counts connected components and triangles of the generated mesh using trimesh."""
+    """Counts connected components and triangles of the generated mesh using trimesh and scipy."""
     try:
         import trimesh
-        mesh = trimesh.load(str(mesh_path), process=False)
-        if isinstance(mesh, trimesh.Scene):
-            geoms = [g for g in mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
-            if geoms:
-                mesh = trimesh.util.concatenate(geoms)
-            else:
-                return 0, 0, 0
+        import scipy.sparse.csgraph as csgraph
+        scene_or_mesh = trimesh.load(str(mesh_path), process=False)
+        tri_meshes = []
+        if isinstance(scene_or_mesh, trimesh.Scene):
+            tri_meshes = [g for g in scene_or_mesh.geometry.values() if isinstance(g, trimesh.Trimesh)]
+        elif isinstance(scene_or_mesh, trimesh.Trimesh):
+            tri_meshes = [scene_or_mesh]
 
+        if not tri_meshes:
+            return 0, 0, 0
+
+        mesh = trimesh.util.concatenate(tri_meshes) if len(tri_meshes) > 1 else tri_meshes[0]
         vertices = len(mesh.vertices)
         triangles = len(mesh.faces)
-        components = len(mesh.split(only_watertight=False))
-        return vertices, triangles, components
+        components, _ = csgraph.connected_components(mesh.edges_sparse)
+        return vertices, triangles, int(components)
     except Exception as e:
         print(f"[Benchmark] Warning: mesh component analysis failed: {e}")
         return 0, 0, 0
@@ -217,7 +257,7 @@ def run_benchmark(video_path, config_name="baseline", bench_file=None, max_frame
     free_ram = get_free_ram_mb()
     print(f"Target Video:    {v_path.name} ({v_path.stat().st_size / (1024**2):.1f} MB)")
     print(f"Initial Free RAM: {free_ram:.1f} MB")
-    print(f"Memory Limit:    {MAX_RAM_GB} GB peak | Timeout: {MAX_TIME_SECONDS}s")
+    print(f"Memory Limit:    {MAX_PROCESS_RAM_GB} GB peak | Timeout: {MAX_TIME_SECONDS}s")
     print("------------------------------------------------------------------")
 
     job_id = f"bench_{int(time.time())}"
@@ -279,6 +319,11 @@ def run_benchmark(video_path, config_name="baseline", bench_file=None, max_frame
         timings["sfm"] = t_colmap_total * 0.25
         print(f"      COLMAP completed in {t_colmap_total:.1f}s. Registered frames: {reg_count}")
 
+        # Analyze submodels from COLMAP
+        num_models, images_per_model, sparse_points = analyze_colmap_models(colmap_dir)
+        model_details = ", ".join([f"m{k}:{v}" for k, v in images_per_model.items()]) if images_per_model else f"{reg_count}"
+        print(f"      Submodels detected: {num_models} ({model_details}), Points: {sparse_points}")
+
         if monitor.aborted:
             raise RuntimeError(monitor.abort_reason)
 
@@ -293,13 +338,9 @@ def run_benchmark(video_path, config_name="baseline", bench_file=None, max_frame
         )
         timings["mesh"] = time.time() - t_mesh_start
 
-        # Analyze submodels and mesh components
-        num_models, images_per_model, sparse_points = analyze_colmap_models(colmap_dir)
-        model_details = ", ".join([f"m{k}:{v}" for k, v in images_per_model.items()]) if images_per_model else f"{reg_count}"
+        # Analyze mesh components
         vertices, triangles, components = count_mesh_components(out_glb)
-
         print(f"      Mesh: {vertices} vertices, {triangles} triangles, {components} connected components")
-        print(f"      Submodels detected: {num_models} ({model_details})")
 
     except Exception as e:
         status = "FAILED"
