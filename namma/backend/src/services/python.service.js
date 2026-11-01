@@ -53,6 +53,22 @@ class PythonService {
       return { success: false, error: error.message };
     }
   }
+
+  async analyzeCaptureCoach(videoPath) {
+    const url = `${this.baseUrl}/api/coach/analyze`;
+    console.log(`[PythonService] Requesting Capture Coach analysis at: ${url}`);
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoPath }),
+      });
+      return await res.json();
+    } catch (error) {
+      console.error(`[PythonService] Capture Coach analysis failed:`, error.message);
+      return { success: false, error: error.message, hopeless: false };
+    }
+  }
 }
 
 export const pythonService = new PythonService();

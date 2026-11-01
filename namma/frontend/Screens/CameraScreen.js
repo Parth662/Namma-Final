@@ -53,6 +53,8 @@ export default function CameraScreen() {
   const [estimatedEta, setEstimatedEta] = useState(null);
   const [userTwinData, setUserTwinData] = useState(null);
   const [conversionError, setConversionError] = useState(null);
+  const [coachAnalysis, setCoachAnalysis] = useState(null);
+  const [showCoachModal, setShowCoachModal] = useState(false);
 
   const cameraRef = useRef(null);
   const timerRef = useRef(null);
@@ -781,6 +783,53 @@ export default function CameraScreen() {
         }
       }
 
+      // 3.5. Capture Coach Pre-check (evaluate footage quality before triggering COLMAP)
+      setConversionProgress(40);
+      setConversionStage('CAPTURE COACH: ANALYZING SCENE QUALITY & CAMERA MOTION...');
+      try {
+        const coachRes = await fetch(`${backendHost}/api/projects/${projectId}/coach`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const coachData = await coachRes.json();
+        if (coachData && coachData.success) {
+          setCoachAnalysis({
+            ...coachData,
+            projectId,
+            token,
+            projName: projData.data.name,
+          });
+          setIsConverting(false);
+          setShowCoachModal(true);
+          return;
+        }
+      } catch (coachErr) {
+        console.warn('[DigitalTwin] Capture Coach check skipped:', coachErr);
+      }
+
+      await executeReconstruction(projectId, token, projData.data.name);
+    } catch (err) {
+      console.error('Conversion initiation failed:', err);
+      setIsConverting(false);
+      setConversionError({
+        title: 'Server connection error',
+        code: 'NETWORK_ERROR',
+        reason: err.message || 'Could not communicate with the backend server.',
+        suggestion: `Please check your network and ensure the backend server is reachable at ${backendHost}.`,
+        serverUrl: backendHost,
+      });
+    }
+  };
+
+  const executeReconstruction = async (projectId, token, projName) => {
+    setIsConverting(true);
+    setShowCoachModal(false);
+    setConversionError(null);
+    const backendHost = getBackendHost();
+
+    try {
       // 4. Trigger Photogrammetry Reconstruction Pipeline
       setConversionProgress(45);
       setConversionStage('STARTING PHOTOGRAMMETRY PIPELINE (COLMAP SfM)...');
@@ -807,7 +856,7 @@ export default function CameraScreen() {
 
           setUserTwinData({
             id: projectId,
-            name: projData.data.name,
+            name: projName || 'Digital Twin',
             status: 'completed',
             source: modelData.source || 'photogrammetry',
             isDemo: Boolean(modelData.isDemo),
@@ -1253,6 +1302,119 @@ export default function CameraScreen() {
             )}
           </View>
         </View>
+
+        {/* Capture Coach Pre-Check Modal */}
+        <Modal visible={showCoachModal} animationType="fade" transparent={true}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.coachModalCard, isMobile && styles.coachModalCardMobile]}>
+              <View style={styles.coachHeaderRow}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <Text style={{ fontSize: 22 }}>🎯</Text>
+                  <Text style={styles.coachTitle}>Capture Coach Pre-Check</Text>
+                </View>
+                {coachAnalysis && (
+                  <View style={[
+                    styles.scoreBadge,
+                    {
+                      backgroundColor:
+                        coachAnalysis.score >= 80 ? '#065f46' :
+                        coachAnalysis.score >= 65 ? '#1e40af' :
+                        coachAnalysis.score >= 45 ? '#854d0e' : '#991b1b',
+                    }
+                  ]}>
+                    <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>
+                      {coachAnalysis.score}/100 • {coachAnalysis.verdict}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Text style={styles.coachSubtitle}>
+                AI inspection of camera motion, lighting stability, and feature overlap before running 3D reconstruction
+              </Text>
+
+              {/* Metrics Grid */}
+              {coachAnalysis?.metrics && (
+                <View style={styles.coachMetricsGrid}>
+                  <View style={styles.coachMetricPill}>
+                    <Text style={styles.coachMetricLabel}>Duration</Text>
+                    <Text style={styles.coachMetricVal}>{coachAnalysis.metrics.durationSeconds}s</Text>
+                  </View>
+                  <View style={styles.coachMetricPill}>
+                    <Text style={styles.coachMetricLabel}>Brightness</Text>
+                    <Text style={styles.coachMetricVal}>{coachAnalysis.metrics.avgBrightness}</Text>
+                  </View>
+                  <View style={styles.coachMetricPill}>
+                    <Text style={styles.coachMetricLabel}>Blurry Frames</Text>
+                    <Text style={styles.coachMetricVal}>{Math.round(coachAnalysis.metrics.blurryFrameRatio * 100)}%</Text>
+                  </View>
+                  <View style={styles.coachMetricPill}>
+                    <Text style={styles.coachMetricLabel}>Texture (ORB)</Text>
+                    <Text style={styles.coachMetricVal}>{coachAnalysis.metrics.medianKeypoints}</Text>
+                  </View>
+                  <View style={styles.coachMetricPill}>
+                    <Text style={styles.coachMetricLabel}>Overlap Drops</Text>
+                    <Text style={styles.coachMetricVal}>{Math.round(coachAnalysis.metrics.lowOverlapFraction * 100)}%</Text>
+                  </View>
+                </View>
+              )}
+
+              {/* Actionable Guidance & Problem Ranges */}
+              <View style={styles.coachTipsContainer}>
+                <Text style={styles.coachTipsHeader}>💡 Guidance & Problem Ranges:</Text>
+                {coachAnalysis?.problemRanges && coachAnalysis.problemRanges.length > 0 ? (
+                  coachAnalysis.problemRanges.map((pr, idx) => (
+                    <View key={idx} style={styles.coachProblemRow}>
+                      <View style={styles.timestampBadge}>
+                        <Text style={styles.timestampText}>{pr.start}s–{pr.end}s</Text>
+                      </View>
+                      <Text style={styles.coachProblemText}>{pr.tip}</Text>
+                    </View>
+                  ))
+                ) : (
+                  (coachAnalysis?.tips || []).map((tip, idx) => (
+                    <Text key={idx} style={styles.coachTipBullet}>• {tip}</Text>
+                  ))
+                )}
+              </View>
+
+              {/* Hopeless Warning */}
+              {coachAnalysis?.hopeless && (
+                <View style={styles.hopelessBanner}>
+                  <Text style={styles.hopelessBannerText}>
+                    ⚠️ Hopeless Footage: Video is pitch black or has zero camera movement. Reconstruction cannot register 3D points.
+                  </Text>
+                </View>
+              )}
+
+              {/* Action Buttons: Convert Anyway & Retake */}
+              <View style={styles.coachActionRow}>
+                <TouchableOpacity
+                  style={styles.retakeBtn}
+                  onPress={() => {
+                    setShowCoachModal(false);
+                    setCoachAnalysis(null);
+                  }}
+                >
+                  <Text style={styles.retakeBtnText}>📹 Retake Video</Text>
+                </TouchableOpacity>
+
+                {!coachAnalysis?.hopeless && (
+                  <TouchableOpacity
+                    style={styles.convertAnywayBtn}
+                    onPress={() => {
+                      if (coachAnalysis) {
+                        executeReconstruction(coachAnalysis.projectId, coachAnalysis.token, coachAnalysis.projName);
+                      }
+                    }}
+                  >
+                    <Text style={styles.convertAnywayBtnText}>⚡ Convert Anyway</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+          </View>
+        </Modal>
 
         {/* Photogrammetry Conversion Progress Modal - Responsive */}
         <Modal visible={isConverting} animationType="fade" transparent={true}>
@@ -2308,5 +2470,162 @@ const styles = StyleSheet.create({
     color: '#cbd5e1',
     fontSize: 11,
     fontWeight: '600',
+  },
+  coachModalCard: {
+    backgroundColor: '#0f172a',
+    borderRadius: 16,
+    padding: 24,
+    width: '92%',
+    maxWidth: 580,
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    shadowColor: '#000',
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  coachModalCardMobile: {
+    padding: 16,
+    maxWidth: '96%',
+  },
+  coachHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  coachTitle: {
+    color: '#f8fafc',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  scoreBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+  },
+  coachSubtitle: {
+    color: '#94a3b8',
+    fontSize: 12,
+    lineHeight: 16,
+    marginBottom: 16,
+  },
+  coachMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 16,
+  },
+  coachMetricPill: {
+    flex: 1,
+    minWidth: 80,
+    backgroundColor: 'rgba(30, 41, 59, 0.7)',
+    borderRadius: 8,
+    padding: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    alignItems: 'center',
+  },
+  coachMetricLabel: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '600',
+    marginBottom: 2,
+  },
+  coachMetricVal: {
+    color: '#38bdf8',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  coachTipsContainer: {
+    backgroundColor: 'rgba(15, 23, 42, 0.6)',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(56, 189, 248, 0.2)',
+    marginBottom: 16,
+    gap: 6,
+  },
+  coachTipsHeader: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  coachProblemRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginVertical: 2,
+  },
+  timestampBadge: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderWidth: 1,
+    borderColor: '#f59e0b',
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  timestampText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  coachProblemText: {
+    flex: 1,
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  coachTipBullet: {
+    color: '#cbd5e1',
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  hopelessBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderWidth: 1,
+    borderColor: '#ef4444',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+  },
+  hopelessBannerText: {
+    color: '#f87171',
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  coachActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+    justifyContent: 'flex-end',
+    marginTop: 8,
+  },
+  retakeBtn: {
+    flex: 1,
+    backgroundColor: '#334155',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  retakeBtnText: {
+    color: '#f1f5f9',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  convertAnywayBtn: {
+    flex: 1.2,
+    backgroundColor: '#0284c7',
+    paddingVertical: 11,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+  },
+  convertAnywayBtnText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
   },
 });

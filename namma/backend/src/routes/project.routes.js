@@ -14,6 +14,7 @@ import {
   getReconstructionStatus,
   cancelReconstruction,
   handleInternalProgress,
+  getCaptureCoach,
 } from '../controllers/reconstruction.controller.js';
 import { authenticate, optionalAuthenticate } from '../middleware/auth.middleware.js';
 import { uploadVideoMiddleware, validateProjectForUpload } from '../middleware/upload.middleware.js';
@@ -39,6 +40,7 @@ router.post(
 
 // Reconstruction Trigger, Status & Cancel (Section 7, 20)
 router.post('/internal/progress', handleInternalProgress);
+router.post('/:id/coach', authenticate, getCaptureCoach);
 router.post('/:id/reconstruct', authenticate, startReconstruction);
 router.post('/:id/cancel', authenticate, cancelReconstruction);
 router.get('/:id/status', authenticate, getReconstructionStatus);

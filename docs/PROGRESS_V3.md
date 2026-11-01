@@ -14,8 +14,7 @@ Last Updated: 2026-11-01
 - [x] **Step 1:** Create `backend/test-videos/` (gitignored) and check for `big.mp4` / test videos. (Found `big.mp4` [187MB, 85s] and `video_20261101_095812.mp4` [111MB, 51s] on Desktop and copied into `namma/backend/test-videos/`, both gitignored).
 - [x] **Step 2:** Write `scripts/bench` (benchmark runner enforcing memory/time aborts, writing to `docs/BENCHMARKS.md`). Created `scripts/bench.py` with memory/time abort monitor (<6.5GB, <8min) and multi-shell wrappers (`bench`, `bench.ps1`, `bench.cmd`).
 - [x] **Step 3:** Record baseline benchmark with current default config on `big.mp4` (and corridor video). Recorded baseline for `big.mp4` (60 frames, 17 registered [28.3%], 3 models, 2800 pts, 32 components in 91.1s) and corridor video `video_20261101_095812.mp4` (30 frames, 4 registered [13.3%], 298 pts in 39.6s) in `docs/BENCHMARKS.md`.
-- [ ] **Step 4:** Capture Coach pre-check (cheap video analysis at ~2 fps ≤ 640 px: brightness range, blur ratio, keypoints, consecutive match overlap, tips & problematic ranges, UI integration).
-
+- [x] **Step 4:** Capture Coach pre-check (cheap video analysis at ~2 fps ≤ 640 px: brightness range, blur ratio, keypoints, consecutive match overlap, tips & problematic ranges, UI integration). Implemented `python-service/coach.py`, `POST /api/coach/analyze`, Node route `POST /api/projects/:id/coach`, and interactive pre-check modal in `CameraScreen.js` featuring overall score, metrics, timestamped tips, "Convert anyway", and "Retake".
 ## Phase B — Frames & Matching
 - [ ] **Step 5:** Adaptive keyframe selection (~4 fps, ≤ 960 px, drop dark/blurry, keep when feature match < 60%, 0.25-2s gap, cap at MAX_FRAMES, non-black first frame).
 - [ ] **Step 6:** Configurable matching strategy (sequential vs exhaustive automatic selection).

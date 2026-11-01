@@ -272,3 +272,34 @@ export const cancelReconstruction = async (req, res, next) => {
     next(err);
   }
 };
+
+export const getCaptureCoach = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findOne({ _id: id, userId: req.user._id });
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+
+    const paths = storageService.ensureProjectDirectories(project._id);
+    const uploadedVideo = path.join(paths.uploadsProjectDir, 'video.mp4');
+    const storageVideo = path.join(paths.sourceDir, 'video.mp4');
+
+    const videoPath = fs.existsSync(uploadedVideo)
+      ? uploadedVideo
+      : (fs.existsSync(storageVideo) ? storageVideo : null);
+
+    if (!videoPath) {
+      return res.status(400).json({
+        success: false,
+        error: 'No uploaded video found for this project.',
+        hopeless: true,
+      });
+    }
+
+    const coachResult = await pythonService.analyzeCaptureCoach(videoPath);
+    return res.status(200).json(coachResult);
+  } catch (err) {
+    next(err);
+  }
+};

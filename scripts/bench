@@ -5,3 +5,4 @@ if [ ! -f "$PYTHON_EXE" ]; then
     PYTHON_EXE="$SCRIPT_DIR/../namma/backend/python-service/venv/bin/python"
 fi
 "$PYTHON_EXE" "$SCRIPT_DIR/bench.py" "$@"
+

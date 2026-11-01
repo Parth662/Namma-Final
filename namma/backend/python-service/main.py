@@ -36,6 +36,16 @@ class CancelRequest(BaseModel):
     jobId: str
     projectId: Optional[str] = None
 
+class CoachRequest(BaseModel):
+    videoPath: str
+
+@app.post("/api/coach/analyze")
+def analyze_coach(req: CoachRequest):
+    print(f"[PythonEngine] Running Capture Coach analysis on {req.videoPath}")
+    from coach import analyze_video_capture
+    result = analyze_video_capture(req.videoPath)
+    return result
+
 @app.post("/api/reconstruct/cancel")
 def cancel_reconstruction(req: CancelRequest):
     print(f"[PythonEngine] Received cancellation request for job {req.jobId}")
