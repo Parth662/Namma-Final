@@ -653,7 +653,10 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
 
     img_dir = Path(image_dir).resolve()
 
-    # 1. Feature Extraction (SIFT) — memory-safe settings (2 threads, 960px max size)
+    colmap_env = os.environ.copy()
+    colmap_env["OMP_NUM_THREADS"] = "1"
+
+    # 1. Feature Extraction (SIFT) — single thread on CPU prevents STATUS_ACCESS_VIOLATION / OOM crashes on Windows
     cmd_extract = [
         colmap_bin, "feature_extractor",
         "--database_path", str(database_path),
@@ -661,13 +664,13 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--ImageReader.single_camera", "1",
         "--ImageReader.camera_model", "SIMPLE_RADIAL",
         "--FeatureExtraction.use_gpu", "0",
-        "--FeatureExtraction.num_threads", "2",
+        "--FeatureExtraction.num_threads", "1",
         "--FeatureExtraction.max_image_size", "960",
         "--SiftExtraction.max_num_features", "4000",
         "--SiftExtraction.peak_threshold", "0.003",
         "--SiftExtraction.edge_threshold", "10",
     ]
-    res = run_command(cmd_extract, job_id=job_id, timeout=600, log_path=log_file, check=False)
+    res = run_command(cmd_extract, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
     print(f"[COLMAP] feature_extractor returncode={res.returncode}")
     if res.returncode != 0:
         err_msg = format_process_error("COLMAP feature_extractor", res.returncode, res.stdout, res.stderr, log_path=log_file)
@@ -684,7 +687,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--SequentialMatching.overlap", "15",
         "--SequentialMatching.quadratic_overlap", "1",
     ]
-    res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, check=False)
+    res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
     print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
     if res.returncode == 0:
         matched = True
@@ -698,7 +701,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
             "--FeatureMatching.use_gpu", "0",
             "--FeatureMatching.num_threads", "2",
         ]
-        res_ex = run_command(cmd_match_ex, job_id=job_id, timeout=600, log_path=log_file, check=False)
+        res_ex = run_command(cmd_match_ex, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
         print(f"[COLMAP] exhaustive_matcher returncode={res_ex.returncode}")
         if res_ex.returncode != 0:
             err_msg = format_process_error("COLMAP feature matching", res_ex.returncode, res_ex.stdout, res_ex.stderr, log_path=log_file)
@@ -717,7 +720,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--Mapper.abs_pose_min_inlier_ratio", "0.1",
         "--Mapper.max_extra_param", "1",
     ]
-    res = run_command(cmd_mapper, job_id=job_id, timeout=1200, log_path=log_file, check=False)
+    res = run_command(cmd_mapper, job_id=job_id, timeout=1200, log_path=log_file, env=colmap_env, check=False)
     print(f"[COLMAP] mapper returncode={res.returncode}")
     if res.returncode != 0:
         err_msg = format_process_error("COLMAP incremental mapper", res.returncode, res.stdout, res.stderr, log_path=log_file)
@@ -764,7 +767,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--output_path", str(ply_path),
         "--output_type", "PLY"
     ]
-    run_command(cmd_convert_ply, job_id=job_id, timeout=120, log_path=log_file, check=True)
+    run_command(cmd_convert_ply, job_id=job_id, timeout=120, log_path=log_file, env=colmap_env, check=True)
 
     txt_dir = ws_dir / "txt"
     txt_dir.mkdir(parents=True, exist_ok=True)
@@ -774,7 +777,7 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--output_path", str(txt_dir),
         "--output_type", "TXT"
     ]
-    run_command(cmd_convert_txt, job_id=job_id, timeout=120, log_path=log_file, check=True)
+    run_command(cmd_convert_txt, job_id=job_id, timeout=120, log_path=log_file, env=colmap_env, check=True)
 
     # 5. Validate registered cameras and 3D points
     images_txt = txt_dir / "images.txt"
