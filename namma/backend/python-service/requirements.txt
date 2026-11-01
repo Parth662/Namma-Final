@@ -2,7 +2,10 @@ fastapi>=0.100.0
 uvicorn[standard]>=0.22.0
 pydantic>=2.0.0
 numpy
-opencv-python
+opencv-python-headless
 open3d
 trimesh
 pillow
+scipy
+shapely>=2.0.0
+pyproj>=3.6.0

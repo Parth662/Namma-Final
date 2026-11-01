@@ -1,0 +1,78 @@
+# ==============================================================================
+# NAMMA SPACE — Render Infrastructure-as-Code Blueprint (render.yaml)
+# Connect your GitHub repo (Parth662/Namma-Final) to Render as a Blueprint.
+# Docs: https://render.com/docs/blueprint-spec
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Frontend: Expo React Native Web Static Site (Free Tier)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: namma-frontend
+    runtime: static
+    plan: free
+    rootDir: namma/frontend
+    buildCommand: npm install --legacy-peer-deps && npm run build:web
+    staticPublishPath: dist
+    envVars:
+      - key: EXPO_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: namma-api
+          property: host
+
+  # ----------------------------------------------------------------------------
+  # 2. Backend: Node.js Express REST API & Socket.IO Web Service (Free Tier)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: namma-api
+    runtime: node
+    plan: free
+    rootDir: namma/backend
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: RUN_WORKER_IN_SERVER
+        value: "true" # Runs BullMQ worker inline with API (saving a separate worker cost)
+      - key: JWT_SECRET
+        generateValue: true # Render securely generates a random 256-bit secret
+      - key: MONGODB_URI
+        sync: false # Set in Render Dashboard from free MongoDB Atlas (mongodb+srv://...)
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: namma-redis
+          property: connectionString
+      - key: RECON_ENGINE_URL
+        value: http://namma-python:5002
+
+  # ----------------------------------------------------------------------------
+  # 3. Python 3D Reconstruction Service (Private Service, Docker)
+  # ----------------------------------------------------------------------------
+  - type: pserv
+    name: namma-python
+    runtime: docker
+    plan: starter # Starter plan recommended for 2GB+ RAM for photogrammetry
+    dockerfilePath: namma/backend/python-service/Dockerfile
+    dockerContext: namma/backend/python-service
+    envVars:
+      - key: PORT
+        value: 5002
+      - key: HOST
+        value: 0.0.0.0
+      - key: MOCK_RECONSTRUCTION
+        value: "0"
+
+  # ----------------------------------------------------------------------------
+  # 4. Redis Cache & BullMQ Broker (Free Tier)
+  # ----------------------------------------------------------------------------
+  - type: redis
+    name: namma-redis
+    plan: free
+    ipAllowList: [] # Accessible only within Render's secure private network

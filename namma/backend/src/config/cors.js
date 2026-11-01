@@ -8,10 +8,14 @@ export const isOriginAllowed = (origin) => {
   if (!origin) return true;
 
   if (env.NODE_ENV === 'production') {
-    const allowed = process.env.ALLOWED_ORIGINS
-      ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
-      : [];
-    return allowed.includes(origin);
+    if (!process.env.ALLOWED_ORIGINS || process.env.ALLOWED_ORIGINS === '*') {
+      return true;
+    }
+    const allowed = process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim());
+    if (allowed.includes(origin)) return true;
+    // Automatically allow Render-hosted frontend subdomains
+    if (/^https:\/\/[a-zA-Z0-9-]+\.onrender\.com$/.test(origin)) return true;
+    return false;
   }
 
   // Dev only: allow localhost and private LAN origins on ports 8081/19006

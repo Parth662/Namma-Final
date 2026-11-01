@@ -8,13 +8,25 @@ export const getBackendBaseUrl = () => {
   const overrideUrl = process.env.EXPO_PUBLIC_API_URL;
   if (overrideUrl && overrideUrl.trim() !== '') {
     let clean = overrideUrl.includes(':5002') ? overrideUrl.replace(':5002', ':5001') : overrideUrl;
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      clean = `https://${clean}`;
+    }
     return clean.replace(/\/+$/, '');
   }
 
-  // 2. On Web: the Node API is plain HTTP.
-  // Use http://${window.location.hostname}:5001 (never https unless EXPO_PUBLIC_API_URL explicitly says so).
+  // 2. On Web:
   if (typeof window !== 'undefined' && window.location && window.location.hostname) {
     const hostname = window.location.hostname || 'localhost';
+    const isHttps = window.location.protocol === 'https:';
+
+    if (isHttps) {
+      // Production Render deployment auto-fallback
+      if (hostname.includes('.onrender.com')) {
+        return `https://${hostname.replace('-frontend', '-api')}`;
+      }
+      return `https://${hostname}`;
+    }
+
     return `http://${hostname}:5001`;
   }
 
