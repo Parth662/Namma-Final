@@ -1,6 +1,12 @@
 import os
-import shutil
 import sys
+
+# Prevent OpenBLAS/OMP thread exhaustion and memory allocation failures on constrained 8GB Windows machines
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
+import shutil
 import traceback
 from pathlib import Path
 from fastapi import FastAPI, HTTPException

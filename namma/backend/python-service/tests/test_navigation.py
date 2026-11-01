@@ -8,6 +8,10 @@ Automated unit tests for Navigation Engine:
 - Phase F: A* path verification ensuring path never leaves floor polygon
 """
 
+import os
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import unittest
 import numpy as np
 import math
