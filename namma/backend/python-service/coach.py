@@ -270,3 +270,4 @@ def _cluster_timestamps(timestamps, gap=2.0):
             cur_end = t
     intervals.append((cur_start, cur_end))
     return intervals
+

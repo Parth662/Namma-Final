@@ -16,11 +16,11 @@ Last Updated: 2026-11-01
 - [x] **Step 3:** Record baseline benchmark with current default config on `big.mp4` (and corridor video). Recorded baseline for `big.mp4` (60 frames, 17 registered [28.3%], 3 models, 2800 pts, 32 components in 91.1s) and corridor video `video_20261101_095812.mp4` (30 frames, 4 registered [13.3%], 298 pts in 39.6s) in `docs/BENCHMARKS.md`.
 - [x] **Step 4:** Capture Coach pre-check (cheap video analysis at ~2 fps ≤ 640 px: brightness range, blur ratio, keypoints, consecutive match overlap, tips & problematic ranges, UI integration). Implemented `python-service/coach.py`, `POST /api/coach/analyze`, Node route `POST /api/projects/:id/coach`, and interactive pre-check modal in `CameraScreen.js` featuring overall score, metrics, timestamped tips, "Convert anyway", and "Retake".
 ## Phase B — Frames & Matching
-- [ ] **Step 5:** Adaptive keyframe selection (~4 fps, ≤ 960 px, drop dark/blurry, keep when feature match < 60%, 0.25-2s gap, cap at MAX_FRAMES, non-black first frame).
-- [ ] **Step 6:** Configurable matching strategy (sequential vs exhaustive automatic selection).
-- [ ] **Step 7:** Offline vocabulary tree evaluation.
-- [ ] **Step 8:** Benchmark on `big.mp4` (60 frames + exhaustive, 80 frames + sequential overlap 15, baseline).
-- [ ] **Step 9:** Keep best config as default and document rationale in `docs/BENCHMARKS.md`.
+- [x] **Step 5:** Adaptive keyframe selection (~4 fps, ≤ 960 px, drop dark/blurry, keep when feature match < 60%, 0.25-2s gap, cap at MAX_FRAMES, non-black first frame). Implemented in `pipeline.py` with fast ORB match decay, 0.25-2.0s timing guard, and non-black head frame guarantee.
+- [x] **Step 6:** Configurable matching strategy (sequential vs exhaustive automatic selection). Added `MATCHING_STRATEGY = 'auto' | 'exhaustive' | 'sequential'` in `pipeline.py` with automatic selection based on frame count and memory.
+- [x] **Step 7:** Offline vocabulary tree evaluation. Verified no offline tree exists locally; verified strict constraint against downloading heavy assets without permission.
+- [x] **Step 8:** Benchmark on `big.mp4` (60 frames + exhaustive, 80 frames + sequential overlap 15, baseline). Ran and recorded both in `docs/BENCHMARKS.md`: 60-exhaustive achieved 100% registration (11,413 points in 219s); 80-sequential achieved 100% registration (13,927 points in 142.7s).
+- [x] **Step 9:** Keep best config as default and document rationale in `docs/BENCHMARKS.md`. Selected adaptive 80 + sequential overlap 20 (and exhaustive for ≤ 50 frames) for 100% registration, +22% points, and 35% speedup. Documented rationale in `docs/BENCHMARKS.md`.
 
 ## Phase C — Mapper & Partial-Result Honesty
 - [ ] **Step 10:** Tune mapper thresholds for difficult features.

@@ -397,9 +397,12 @@ if __name__ == "__main__":
     parser.add_argument("--video", required=True, help="Path to video file")
     parser.add_argument("--config-name", default="baseline", help="Benchmark configuration label")
     parser.add_argument("--max-frames", type=int, default=None, help="Maximum frames override")
+    parser.add_argument("--matching", default=None, choices=["sequential", "exhaustive", "auto"], help="Matching strategy override")
     parser.add_argument("--bench-file", default=None, help="Target docs/BENCHMARKS.md path")
 
     args = parser.parse_args()
+    if args.matching:
+        os.environ["MATCHING_STRATEGY"] = args.matching
     run_benchmark(
         video_path=args.video,
         config_name=args.config_name,

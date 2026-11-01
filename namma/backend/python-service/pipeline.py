@@ -282,16 +282,9 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
     duration = get_video_duration(vpath)
     print(f"[FFmpeg] Video duration measured: {duration:.2f}s")
 
-    # Target frame count: 50-60 for videos longer than ~30s, else ~30
-    if duration >= 28.0:
-        target_count = int(os.environ.get("MAX_FRAMES", min(60, max(50, round(duration * 1.5)))))
-        cand_fps = max(2.0, (target_count * 1.6) / max(1.0, duration))
-    else:
-        target_count = int(os.environ.get("MAX_FRAMES", 30))
-        cand_fps = float(os.environ.get("FRAME_FPS", 2.0))
-
-    if max_frames is not None:
-        target_count = max_frames
+    # Adaptive keyframe selection (4 fps candidates, max 960 px, capped at MAX_FRAMES, default 80)
+    cand_fps = float(os.environ.get("FRAME_FPS", 4.0))
+    max_frames_cap = int(max_frames or os.environ.get("MAX_FRAMES", 80))
 
     max_size = int(max_image_size or os.environ.get("MAX_IMAGE_SIZE", 960))
 
@@ -327,7 +320,7 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
             "Record at least 5 to 15 seconds continuously orbiting the room or subject."
         )
 
-    # 1. Filter out near-black frames & calculate sharpness
+    # 1. Filter out near-black and blurry candidate frames
     valid_candidates = []
     total_cands = len(cand_files)
     effective_dur = max(duration, float(total_cands) / max(1.0, cand_fps))
@@ -339,59 +332,86 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         mean_lum = float(np.mean(gray))
         max_lum = float(np.max(gray))
-        if mean_lum < 18.0 or max_lum < 35.0:
-            print(f"[FFmpeg] Dropping near-black candidate frame {Path(fpath).name} (lum={mean_lum:.1f})")
+        # Drop near-black or unexposed frames (first frame is never black)
+        if mean_lum < 20.0 or max_lum < 40.0:
             continue
         var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        # Drop severely blurred frames
+        if var < 35.0:
+            continue
         approx_time = (float(idx) / float(total_cands)) * effective_dur
         valid_candidates.append({
             "path": fpath,
             "idx": idx,
             "time": approx_time,
             "sharpness": var,
+            "gray": gray,
         })
 
     if len(valid_candidates) < 4:
         raise InsufficientQualityException(
             "REJECTED_TOO_DARK",
-            "Video contains mostly near-black or unexposed frames.",
-            "Please record in better lighting conditions."
+            "Video contains mostly near-black or severely blurry frames.",
+            "Please record in better lighting conditions and move more smoothly."
         )
 
-    # 2. Drop the blurriest 20%
-    sharpness_scores = [c["sharpness"] for c in valid_candidates]
-    if len(valid_candidates) > target_count:
-        q20 = float(np.quantile(sharpness_scores, 0.20))
-        sharp_candidates = [c for c in valid_candidates if c["sharpness"] >= q20]
-        if len(sharp_candidates) < target_count:
-            sharp_candidates = sorted(valid_candidates, key=lambda c: c["sharpness"], reverse=True)[:target_count]
-            sharp_candidates.sort(key=lambda c: c["time"])
-    else:
-        sharp_candidates = valid_candidates
+    # 2. Adaptive Keyframe Selection using feature match decay
+    # Keep frame only when feature matches with last kept frame fall below ~60%
+    # Constraints: min gap 0.25s, max gap 2.0s, cap at MAX_FRAMES (default 80)
+    orb = cv2.ORB_create(nfeatures=500)
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
-    print(f"[FFmpeg] Evaluated {len(valid_candidates)} non-black candidates; retained {len(sharp_candidates)} after dropping blurriest 20%")
-
-    # 3. Spread evenly in time across target_count bins
-    N = min(target_count, len(sharp_candidates))
-    bin_edges = np.linspace(0.0, effective_dur, N + 1)
     selected = []
-    used_indices = set()
+    first_cand = valid_candidates[0]
+    kp0, des0 = orb.detectAndCompute(first_cand["gray"], None)
+    first_cand["des"] = des0
+    first_cand["num_kp"] = len(kp0) if kp0 else 0
+    selected.append(first_cand)
+    last_kept = first_cand
 
-    for b in range(N):
-        t_start = bin_edges[b]
-        t_end = bin_edges[b + 1]
-        in_bin = [c for c in sharp_candidates if t_start <= c["time"] < t_end and c["idx"] not in used_indices]
-        if in_bin:
-            best = max(in_bin, key=lambda c: c["sharpness"])
-            selected.append(best)
-            used_indices.add(best["idx"])
+    for curr in valid_candidates[1:]:
+        if len(selected) >= max_frames_cap:
+            break
+
+        dt = curr["time"] - last_kept["time"]
+        if dt < 0.25:
+            # Min gap 0.25s
+            continue
+
+        kp, des = orb.detectAndCompute(curr["gray"], None)
+        curr["des"] = des
+        num_kp = len(kp) if kp else 0
+        curr["num_kp"] = num_kp
+
+        if dt >= 2.0:
+            # Max gap 2.0s reached; keep to avoid track fragmentation
+            selected.append(curr)
+            last_kept = curr
+            continue
+
+        # Calculate feature match overlap with last kept frame
+        if last_kept.get("des") is not None and des is not None and len(last_kept["des"]) > 10 and len(des) > 10:
+            try:
+                matches = bf.match(last_kept["des"], des)
+                match_ratio = len(matches) / max(1, num_kp)
+            except Exception:
+                match_ratio = 1.0
         else:
-            center = (t_start + t_end) / 2.0
-            avail = [c for c in sharp_candidates if c["idx"] not in used_indices]
-            if avail:
-                best = min(avail, key=lambda c: abs(c["time"] - center))
-                selected.append(best)
-                used_indices.add(best["idx"])
+            match_ratio = 0.0
+
+        # Keep frame only when overlap falls below 60%
+        if match_ratio < 0.60:
+            selected.append(curr)
+            last_kept = curr
+
+    # If adaptive selection yielded fewer than 25 frames on a longer video, backfill sharpest candidates
+    if len(selected) < min(30, len(valid_candidates)) and len(valid_candidates) > len(selected):
+        selected_indices = set(s["idx"] for s in selected)
+        remaining = [c for c in valid_candidates if c["idx"] not in selected_indices]
+        remaining.sort(key=lambda c: c["sharpness"], reverse=True)
+        need = min(max_frames_cap - len(selected), len(remaining))
+        selected.extend(remaining[:need])
+        selected.sort(key=lambda c: c["time"])
 
     selected.sort(key=lambda c: c["time"])
 
@@ -409,7 +429,7 @@ def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max
         except OSError:
             pass
 
-    print(f"[FFmpeg] Extracted {len(final_extracted)} sharpness-selected frames spread evenly in time (target={target_count}, duration={duration:.1f}s)")
+    print(f"[AdaptiveFrames] Extracted {len(final_extracted)} adaptively-selected keyframes (cand_fps={cand_fps}, cap={max_frames_cap}, duration={duration:.1f}s)")
     return final_extracted
 
 def check_early_rejection(frames_list):
@@ -676,35 +696,65 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         err_msg = format_process_error("COLMAP feature_extractor", res.returncode, res.stdout, res.stderr, log_path=log_file)
         raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
-    # 2a. Sequential matching (best for video frames, capped at 2 threads)
-    matched = False
-    cmd_match = [
-        colmap_bin, "sequential_matcher",
-        "--database_path", str(database_path),
-        "--FeatureMatching.use_gpu", "0",
-        "--FeatureMatching.num_threads", "2",
-        "--SequentialMatching.num_threads", "2",
-        "--SequentialMatching.overlap", "15",
-        "--SequentialMatching.quadratic_overlap", "1",
-    ]
-    res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
-    print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
-    if res.returncode == 0:
-        matched = True
+    # 2. Configurable Matching Strategy (sequential vs exhaustive automatic selection)
+    matching_strategy = os.environ.get("MATCHING_STRATEGY", "auto").lower()
+    exhaustive_max_frames = int(os.environ.get("EXHAUSTIVE_MAX_FRAMES", 70))
 
-    # 2b. Exhaustive matching fallback (capped at 2 threads)
-    if not matched:
-        print("[COLMAP] Sequential matching non-zero exit, running exhaustive matcher fallback...")
-        cmd_match_ex = [
+    image_count = len(list(img_dir.glob("*.png"))) + len(list(img_dir.glob("*.jpg")))
+    try:
+        import psutil
+        free_ram_mb = psutil.virtual_memory().available / (1024 * 1024)
+    except Exception:
+        free_ram_mb = 1000.0
+
+    use_exhaustive = False
+    if matching_strategy == "exhaustive":
+        use_exhaustive = True
+        print(f"[COLMAP] Explicitly configured EXHAUSTIVE matching (frames={image_count})")
+    elif matching_strategy == "sequential":
+        use_exhaustive = False
+        print(f"[COLMAP] Explicitly configured SEQUENTIAL matching (frames={image_count}, overlap=20)")
+    else:  # "auto"
+        # Choose exhaustive when frames <= EXHAUSTIVE_MAX_FRAMES (default 70) and free RAM allows
+        if image_count <= exhaustive_max_frames and free_ram_mb > 500.0:
+            use_exhaustive = True
+            print(f"[COLMAP] Auto-selected EXHAUSTIVE matching (frames={image_count} <= {exhaustive_max_frames}, free_ram={free_ram_mb:.0f}MB)")
+        else:
+            use_exhaustive = False
+            print(f"[COLMAP] Auto-selected SEQUENTIAL matching (frames={image_count}, overlap=20, quadratic=1)")
+
+    matched = False
+    if use_exhaustive:
+        cmd_match = [
             colmap_bin, "exhaustive_matcher",
             "--database_path", str(database_path),
             "--FeatureMatching.use_gpu", "0",
             "--FeatureMatching.num_threads", "2",
+            "--ExhaustiveMatching.block_size", "50",
         ]
-        res_ex = run_command(cmd_match_ex, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
-        print(f"[COLMAP] exhaustive_matcher returncode={res_ex.returncode}")
-        if res_ex.returncode != 0:
-            err_msg = format_process_error("COLMAP feature matching", res_ex.returncode, res_ex.stdout, res_ex.stderr, log_path=log_file)
+        res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
+        print(f"[COLMAP] exhaustive_matcher returncode={res.returncode}")
+        if res.returncode == 0:
+            matched = True
+        else:
+            print("[COLMAP] Exhaustive matcher failed, falling back to sequential matcher...")
+
+    if not matched:
+        cmd_match = [
+            colmap_bin, "sequential_matcher",
+            "--database_path", str(database_path),
+            "--FeatureMatching.use_gpu", "0",
+            "--FeatureMatching.num_threads", "2",
+            "--SequentialMatching.num_threads", "2",
+            "--SequentialMatching.overlap", "20",
+            "--SequentialMatching.quadratic_overlap", "1",
+        ]
+        res = run_command(cmd_match, job_id=job_id, timeout=600, log_path=log_file, env=colmap_env, check=False)
+        print(f"[COLMAP] sequential_matcher returncode={res.returncode}")
+        if res.returncode == 0:
+            matched = True
+        else:
+            err_msg = format_process_error("COLMAP feature matching", res.returncode, res.stdout, res.stderr, log_path=log_file)
             raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
     # 3. Incremental Mapper — relaxed thresholds for indoor/mobile video, capped at 2 threads
