@@ -55,3 +55,4 @@ Follow these rules when capturing video footage with your smartphone:
 | **Overlap** | $\ge 65\%$ between camera angles | Prevents track fragmentation |
 | **Lighting** | Balanced, diffuse interior light | High keypoint contrast |
 | **End Frame** | Match the start frame | Guarantees loop closure |
+

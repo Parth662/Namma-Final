@@ -44,3 +44,4 @@ $$(\text{lon}, \text{lat}) = \text{Proj}_{\text{aeqd}}^{-1}(x', z')$$
 ### C. Scale Indeterminacy in Monocular Photogrammetry
 - **Problem:** Pure monocular SfM (Structure-from-Motion) is scale-invariant (it reconstructs up to an arbitrary scale factor $\lambda$).
 - **Mitigation:** Namma Space includes a two-point metric calibration tool (`POST /api/projects/:id/calibrate`) and standard architectural height assumptions (e.g., standard door height $2.0\text{ m}$ / ceiling height $2.6\text{ m}$) to pin scale to true metric meters.
+

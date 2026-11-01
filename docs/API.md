@@ -141,3 +141,4 @@ Lists all POIs in the space. Filter by `?q=` or `?category=`.
 ### `POST /api/projects/:id/pois`
 Creates a new POI marker anchored in 3D metric coordinates. Automatically snaps to walkable floor area.
 - **Body:** `{ "name": "Desk 1", "category": "workstation", "position": { "x": 1.2, "y": 0.4, "z": -0.8 } }`
+
