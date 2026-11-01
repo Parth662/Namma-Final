@@ -717,18 +717,24 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
         # Default warm architectural tone if colors missing
         colors = np.ones((len(points), 3)) * 0.8
 
+    # Slight brightness boost for indoor captures if overall luminance is dark
+    if np.mean(colors) < 0.45:
+        colors_boosted = np.clip(colors * 1.35, 0.0, 1.0)
+    else:
+        colors_boosted = colors
+
     # Estimate surface normals
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
     pcd.orient_normals_consistent_tangent_plane(15)
 
-    # Mesh reconstruction via Poisson or Ball Pivoting
+    # Mesh reconstruction via Poisson (depth 9 with tighter density trimming to prune empty bubbles)
     mesh = None
     try:
         if len(points) >= 100:
-            poisson_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=8)
-            # Trim low density boundary regions
+            poisson_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
+            # Trim low density outer boundary bubbles (bottom 20%)
             densities = np.asarray(densities)
-            density_threshold = np.quantile(densities, 0.05)
+            density_threshold = np.quantile(densities, 0.20)
             vertices_to_remove = densities < density_threshold
             poisson_mesh.remove_vertices_by_mask(vertices_to_remove)
             
@@ -749,20 +755,22 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
         except Exception as e:
             print(f"[Pipeline] Ball pivoting fallback: {e}")
 
-    # If still sparse, build a point-based volumetric mesh using Trimesh
+    # Build Trimesh geometries
     os.makedirs(os.path.dirname(output_glb_path), exist_ok=True)
     
+    pt_cloud = trimesh.PointCloud(
+        vertices=points,
+        colors=(np.clip(colors_boosted, 0, 1) * 255).astype(np.uint8)
+    )
+
     if mesh is not None and len(mesh.triangles) > 30:
         v = np.asarray(mesh.vertices)
         f = np.asarray(mesh.triangles)
-        c = np.asarray(mesh.vertex_colors)
-        if len(c) != len(v):
-            # Nearest neighbor color transfer from pcd to mesh vertices
-            pcd_tree = o3d.geometry.KDTreeFlann(pcd)
-            c = np.zeros_like(v)
-            for i, vert in enumerate(v):
-                _, idx, _ = pcd_tree.search_knn_vector_3d(vert, 1)
-                c[i] = colors[idx[0]]
+        pcd_tree = o3d.geometry.KDTreeFlann(pcd)
+        c = np.zeros_like(v)
+        for i, vert in enumerate(v):
+            _, idx, _ = pcd_tree.search_knn_vector_3d(vert, 1)
+            c[i] = colors_boosted[idx[0]]
         
         tri_mesh = trimesh.Trimesh(
             vertices=v,
@@ -771,17 +779,14 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             process=True
         )
     else:
-        # Create dense point representation
-        tri_mesh = trimesh.PointCloud(
-            vertices=points,
-            colors=(np.clip(colors, 0, 1) * 255).astype(np.uint8)
-        )
+        tri_mesh = pt_cloud
 
     # Step 5b: Floor-plane alignment and centering via RANSAC
     alignment_meta = {}
     try:
         from navigation.alignment import align_mesh_or_points
         tri_mesh, transform_matrix, alignment_meta = align_mesh_or_points(tri_mesh)
+        pt_cloud.apply_transform(transform_matrix)
         print(f"[Pipeline] Geometry floor aligned to y=0 with {alignment_meta.get('floorInliersCount', 0)} inliers")
     except Exception as e:
         print(f"[Pipeline] Alignment warning, falling back to simple centering: {e}")
@@ -789,6 +794,7 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
         if bounds is not None:
             center = (bounds[0] + bounds[1]) / 2.0
             tri_mesh.apply_translation(-center)
+            pt_cloud.apply_translation(-center)
 
     bounds = tri_mesh.bounds
     if bounds is not None:
@@ -798,8 +804,11 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
         min_b = np.array([-1.0, 0.0, -1.0])
         max_b = np.array([1.0, 2.0, 1.0])
 
-    # Export to GLB
-    tri_mesh.export(output_glb_path, file_type="glb")
+    # Export to GLB with both surface mesh and authentic point cloud
+    scene_glb = trimesh.Scene()
+    scene_glb.add_geometry(tri_mesh, node_name="surface_mesh")
+    scene_glb.add_geometry(pt_cloud, node_name="point_cloud")
+    scene_glb.export(output_glb_path, file_type="glb")
 
     # Generate preview thumbnail
     os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)

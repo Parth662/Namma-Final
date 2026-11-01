@@ -24,6 +24,7 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
 
   const [activeTab, setActiveTab] = useState('model'); // 'model' | 'pointcloud' | 'wireframe'
   const [viewMode, setViewMode] = useState('orbit'); // 'orbit' | 'walk'
+  const [isUnlit, setIsUnlit] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
   const [showPOIPanel, setShowPOIPanel] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -146,7 +147,8 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
     // 1. Scene
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x070b14);
-    scene.fog = new THREE.FogExp2(0x070b14, 0.02);
+    // Linear fog initialized generously to never obscure the model
+    scene.fog = new THREE.Fog(0x070b14, 25, 120);
     sceneRef.current = scene;
 
     // 2. Camera
@@ -160,23 +162,30 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.shadowMap.enabled = true;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.15;
+    renderer.toneMappingExposure = 1.35;
     container.innerHTML = '';
     container.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    // 4. Lights
-    const ambientLight = new THREE.HemisphereLight(0xffffff, 0x1e293b, 1.3);
+    // 4. Lights: multi-source balanced illumination for vertex colors
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.6);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.5);
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x475569, 1.2);
+    scene.add(hemiLight);
+
+    const sunLight = new THREE.DirectionalLight(0xfffbf0, 1.4);
     sunLight.position.set(15, 25, 15);
     sunLight.castShadow = true;
     scene.add(sunLight);
 
-    const fillLight = new THREE.DirectionalLight(0x38bdf8, 0.5);
-    fillLight.position.set(-15, 12, -15);
+    const fillLight = new THREE.DirectionalLight(0xe0f2fe, 0.9);
+    fillLight.position.set(-15, 15, -15);
     scene.add(fillLight);
+
+    const bottomFillLight = new THREE.DirectionalLight(0xffffff, 0.4);
+    bottomFillLight.position.set(0, -10, 0);
+    scene.add(bottomFillLight);
 
     // Floor grid plane
     const gridHelper = new THREE.GridHelper(30, 30, 0x0ea5e9, 0x1e293b);
@@ -542,6 +551,22 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
     }
   }, [pois]);
 
+  // Synchronize unlit/flat material toggle
+  useEffect(() => {
+    if (!loadedModelRef.current) return;
+    loadedModelRef.current.traverse((child) => {
+      if (child.isMesh) {
+        if (isUnlit && child.userData.unlitMaterial) {
+          child.material = child.userData.unlitMaterial;
+          child.material.wireframe = activeTab === 'wireframe';
+        } else if (!isUnlit && child.userData.shadedMaterial) {
+          child.material = child.userData.shadedMaterial;
+          child.material.wireframe = activeTab === 'wireframe';
+        }
+      }
+    });
+  }, [isUnlit, activeTab]);
+
   // Load Photogrammetry Asset
   const loadPhotogrammetryAsset = (scene, camera) => {
     setLoading(true);
@@ -584,12 +609,36 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
         let totalTriangles = 0;
         const pointPositions = [];
         const pointColors = [];
+        let embeddedPointCloud = null;
 
         model.traverse((child) => {
-          if (child.isMesh) {
+          if (child.isPoints) {
+            embeddedPointCloud = child;
+            child.castShadow = false;
+            child.receiveShadow = false;
+            const ptSize = Math.max(0.12, Math.min(0.28, size.x * 0.015));
+            child.material = new THREE.PointsMaterial({
+              size: ptSize,
+              vertexColors: true,
+              sizeAttenuation: true,
+              transparent: false,
+            });
+            child.visible = (activeTab === 'pointcloud');
+          } else if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            if (child.material) child.material.side = THREE.DoubleSide;
+            if (child.material) {
+              child.material.side = THREE.DoubleSide;
+              child.userData.shadedMaterial = child.material;
+              child.userData.unlitMaterial = new THREE.MeshBasicMaterial({
+                vertexColors: true,
+                side: THREE.DoubleSide,
+                wireframe: activeTab === 'wireframe',
+              });
+              if (isUnlit) {
+                child.material = child.userData.unlitMaterial;
+              }
+            }
             if (child.geometry) {
               const posAttr = child.geometry.attributes.position;
               const colAttr = child.geometry.attributes.color;
@@ -607,24 +656,41 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           }
         });
 
-        if (pointPositions.length > 0) {
+        if (embeddedPointCloud) {
+          pointCloudMeshRef.current = embeddedPointCloud;
+        } else if (pointPositions.length > 0) {
           const ptGeo = new THREE.BufferGeometry();
           ptGeo.setAttribute('position', new THREE.Float32BufferAttribute(pointPositions, 3));
           ptGeo.setAttribute('color', new THREE.Float32BufferAttribute(pointColors, 3));
-          const ptMat = new THREE.PointsMaterial({ size: 0.05, vertexColors: true, transparent: true, opacity: 0.95 });
+          const ptSize = Math.max(0.12, Math.min(0.28, size.x * 0.015));
+          const ptMat = new THREE.PointsMaterial({
+            size: ptSize,
+            vertexColors: true,
+            sizeAttenuation: true,
+            transparent: false,
+          });
           const ptMesh = new THREE.Points(ptGeo, ptMat);
           ptMesh.position.copy(model.position);
-          ptMesh.visible = false;
+          ptMesh.visible = (activeTab === 'pointcloud');
           scene.add(ptMesh);
           pointCloudMeshRef.current = ptMesh;
         }
 
         scene.add(model);
 
-        const maxDim = Math.max(size.x, size.y, size.z, 1.0);
-        cameraSphericalRef.current.radius = Math.max(3.5, maxDim * 2.0);
+        // Auto-frame camera based on model bounding sphere
+        const sphere = box.getBoundingSphere(new THREE.Sphere());
+        const fovRad = (camera.fov * Math.PI) / 180;
+        const fitDistance = Math.max(3.0, (sphere.radius / Math.sin(fovRad / 2)) * 0.95);
+        cameraSphericalRef.current.radius = fitDistance;
         cameraTargetRef.current.set(0, size.y / 2, 0);
         updateCamera();
+
+        // Tune linear fog so model is never obscured
+        if (scene.fog) {
+          scene.fog.near = fitDistance * 1.8;
+          scene.fog.far = fitDistance * 6.0;
+        }
 
         setModelStats({
           vertices: (resolvedProject.metadata?.vertices || totalVertices).toLocaleString(),
@@ -922,7 +988,15 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                   style={[styles.modePill, activeTab === 'model' && styles.modePillActive]}
                   onPress={() => {
                     setActiveTab('model');
-                    if (loadedModelRef.current) loadedModelRef.current.visible = true;
+                    if (loadedModelRef.current) {
+                      loadedModelRef.current.traverse((child) => {
+                        if (child.isMesh) {
+                          child.visible = true;
+                          child.material.wireframe = false;
+                        }
+                        if (child.isPoints) child.visible = false;
+                      });
+                    }
                     if (pointCloudMeshRef.current) pointCloudMeshRef.current.visible = false;
                   }}
                 >
@@ -932,11 +1006,24 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                   style={[styles.modePill, activeTab === 'pointcloud' && styles.modePillActive]}
                   onPress={() => {
                     setActiveTab('pointcloud');
-                    if (loadedModelRef.current) loadedModelRef.current.visible = false;
+                    if (loadedModelRef.current) {
+                      loadedModelRef.current.traverse((child) => {
+                        if (child.isMesh) child.visible = false;
+                        if (child.isPoints) child.visible = true;
+                      });
+                    }
                     if (pointCloudMeshRef.current) pointCloudMeshRef.current.visible = true;
                   }}
                 >
                   <Text style={[styles.modePillText, activeTab === 'pointcloud' && styles.modePillTextActive]}>✨ Point Cloud</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modePill, isUnlit && styles.modePillActive]}
+                  onPress={() => setIsUnlit(!isUnlit)}
+                >
+                  <Text style={[styles.modePillText, isUnlit && styles.modePillTextActive]}>
+                    {isUnlit ? '💡 Shaded Light' : '🎨 Flat / Unlit'}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.modePill, isAddingPOI && styles.modePillActive]}
