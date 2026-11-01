@@ -225,66 +225,192 @@ def get_ffmpeg_bin():
         return str(gyan_path.resolve())
     return "ffmpeg"
 
+def get_ffprobe_bin():
+    env_path = os.environ.get("FFPROBE_PATH")
+    if env_path and os.path.isfile(env_path):
+        return str(Path(env_path).resolve())
+    found = shutil.which("ffprobe")
+    if found:
+        return str(Path(found).resolve())
+    gyan_path = Path(r"C:\Users\parth\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg.Essentials_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-9.0.1-essentials_build\bin\ffprobe.exe")
+    if gyan_path.is_file():
+        return str(gyan_path.resolve())
+    return "ffprobe"
+
+def get_video_duration(video_path):
+    """Measures video duration in seconds via OpenCV with ffprobe fallback."""
+    try:
+        cap = cv2.VideoCapture(str(video_path))
+        if cap.isOpened():
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            cap.release()
+            if fps > 0 and count > 0:
+                dur = float(count) / float(fps)
+                if dur > 0.1:
+                    return dur
+    except Exception:
+        pass
+    try:
+        ffprobe_bin = get_ffprobe_bin()
+        cmd = [
+            ffprobe_bin, "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(video_path)
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10)
+        dur = float(res.stdout.strip())
+        if dur > 0.1:
+            return dur
+    except Exception:
+        pass
+    return 0.0
+
 def extract_frames(video_path, output_dir, target_fps=None, max_frames=None, max_image_size=None, job_id=None, log_file=None):
     """
-    Extract high-quality frames from the uploaded video using ffmpeg directly.
-    Bypasses fragile container duration metadata (e.g. browser WebM streams where duration is N/A).
+    Extract high-quality frames from the uploaded video using ffmpeg directly:
+    - For videos longer than ~30s: raises extracted frame count to 50-60 (max 960 px).
+    - Drops near-black frames and the blurriest 20% by Laplacian variance.
+    - Spreads selected frames evenly in time across the entire video.
     """
-    if target_fps is None:
-        target_fps = float(os.environ.get("FRAME_FPS", 2))
-    if max_frames is None:
-        max_frames = int(os.environ.get("MAX_FRAMES", 30))
-    if max_image_size is None:
-        max_image_size = int(os.environ.get("MAX_IMAGE_SIZE", 960))
-
     out_dir = Path(output_dir).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     ffmpeg_bin = get_ffmpeg_bin()
+    vpath = Path(video_path).resolve()
 
-    out_pattern = out_dir / "frame_%04d.png"
+    duration = get_video_duration(vpath)
+    print(f"[FFmpeg] Video duration measured: {duration:.2f}s")
+
+    # Target frame count: 50-60 for videos longer than ~30s, else ~30
+    if duration >= 28.0:
+        target_count = int(os.environ.get("MAX_FRAMES", min(60, max(50, round(duration * 1.5)))))
+        cand_fps = max(2.0, (target_count * 1.6) / max(1.0, duration))
+    else:
+        target_count = int(os.environ.get("MAX_FRAMES", 30))
+        cand_fps = float(os.environ.get("FRAME_FPS", 2.0))
+
+    if max_frames is not None:
+        target_count = max_frames
+
+    max_size = int(max_image_size or os.environ.get("MAX_IMAGE_SIZE", 960))
+
+    # Scale filter guarantees neither width nor height exceeds max_size (960px)
+    scale_filter = f"scale={max_size}:{max_size}:force_original_aspect_ratio=decrease"
+    out_pattern = out_dir / "cand_%04d.png"
+
     cmd = [
         ffmpeg_bin, "-y",
-        "-i", str(Path(video_path).resolve()),
-        "-vf", f"fps={target_fps},scale={max_image_size}:-1",
+        "-i", str(vpath),
+        "-vf", f"fps={cand_fps:.2f},{scale_filter}",
         "-q:v", "2",
         str(out_pattern)
     ]
     run_command(cmd, job_id=job_id, timeout=120, log_path=log_file, check=False)
-    extracted = sorted([str(p) for p in out_dir.glob("frame_*.png")])
+    cand_files = sorted([str(p) for p in out_dir.glob("cand_*.png")])
 
-    # Fallback to default frame rate if fps filter extracted too few frames
-    if len(extracted) < 4:
+    if len(cand_files) < 4:
         cmd_fallback = [
             ffmpeg_bin, "-y",
-            "-i", str(Path(video_path).resolve()),
-            "-vf", f"scale={max_image_size}:-1",
+            "-i", str(vpath),
+            "-vf", scale_filter,
             "-q:v", "2",
             str(out_pattern)
         ]
         run_command(cmd_fallback, job_id=job_id, timeout=120, log_path=log_file, check=False)
-        extracted = sorted([str(p) for p in out_dir.glob("frame_*.png")])
+        cand_files = sorted([str(p) for p in out_dir.glob("cand_*.png")])
 
-    if len(extracted) < 4:
+    if len(cand_files) < 4:
         raise InsufficientQualityException(
             "INSUFFICIENT_RECONSTRUCTION_QUALITY",
-            f"Only {len(extracted)} frames could be extracted from the video.",
+            f"Only {len(cand_files)} frames could be extracted from the video.",
             "Record at least 5 to 15 seconds continuously orbiting the room or subject."
         )
 
-    # Sub-sample evenly if extracted frames exceed max_frames
-    if len(extracted) > max_frames:
-        step = len(extracted) / max_frames
-        indices = set(int(i * step) for i in range(max_frames))
-        for idx, fpath in enumerate(extracted):
-            if idx not in indices:
-                try:
-                    os.remove(fpath)
-                except OSError:
-                    pass
-        extracted = sorted([str(p) for p in out_dir.glob("frame_*.png")])
+    # 1. Filter out near-black frames & calculate sharpness
+    valid_candidates = []
+    total_cands = len(cand_files)
+    effective_dur = max(duration, float(total_cands) / max(1.0, cand_fps))
 
-    print(f"[FFmpeg] Successfully extracted {len(extracted)} frames from {Path(video_path).name}")
-    return extracted
+    for idx, fpath in enumerate(cand_files):
+        img = cv2.imread(fpath)
+        if img is None:
+            continue
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        mean_lum = float(np.mean(gray))
+        max_lum = float(np.max(gray))
+        if mean_lum < 18.0 or max_lum < 35.0:
+            print(f"[FFmpeg] Dropping near-black candidate frame {Path(fpath).name} (lum={mean_lum:.1f})")
+            continue
+        var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        approx_time = (float(idx) / float(total_cands)) * effective_dur
+        valid_candidates.append({
+            "path": fpath,
+            "idx": idx,
+            "time": approx_time,
+            "sharpness": var,
+        })
+
+    if len(valid_candidates) < 4:
+        raise InsufficientQualityException(
+            "REJECTED_TOO_DARK",
+            "Video contains mostly near-black or unexposed frames.",
+            "Please record in better lighting conditions."
+        )
+
+    # 2. Drop the blurriest 20%
+    sharpness_scores = [c["sharpness"] for c in valid_candidates]
+    if len(valid_candidates) > target_count:
+        q20 = float(np.quantile(sharpness_scores, 0.20))
+        sharp_candidates = [c for c in valid_candidates if c["sharpness"] >= q20]
+        if len(sharp_candidates) < target_count:
+            sharp_candidates = sorted(valid_candidates, key=lambda c: c["sharpness"], reverse=True)[:target_count]
+            sharp_candidates.sort(key=lambda c: c["time"])
+    else:
+        sharp_candidates = valid_candidates
+
+    print(f"[FFmpeg] Evaluated {len(valid_candidates)} non-black candidates; retained {len(sharp_candidates)} after dropping blurriest 20%")
+
+    # 3. Spread evenly in time across target_count bins
+    N = min(target_count, len(sharp_candidates))
+    bin_edges = np.linspace(0.0, effective_dur, N + 1)
+    selected = []
+    used_indices = set()
+
+    for b in range(N):
+        t_start = bin_edges[b]
+        t_end = bin_edges[b + 1]
+        in_bin = [c for c in sharp_candidates if t_start <= c["time"] < t_end and c["idx"] not in used_indices]
+        if in_bin:
+            best = max(in_bin, key=lambda c: c["sharpness"])
+            selected.append(best)
+            used_indices.add(best["idx"])
+        else:
+            center = (t_start + t_end) / 2.0
+            avail = [c for c in sharp_candidates if c["idx"] not in used_indices]
+            if avail:
+                best = min(avail, key=lambda c: abs(c["time"] - center))
+                selected.append(best)
+                used_indices.add(best["idx"])
+
+    selected.sort(key=lambda c: c["time"])
+
+    # Rename to clean frame_%04d.png and delete unselected candidates
+    final_extracted = []
+    selected_paths = set(s["path"] for s in selected)
+    for i, s in enumerate(selected):
+        final_path = out_dir / f"frame_{i + 1:04d}.png"
+        shutil.copyfile(s["path"], str(final_path))
+        final_extracted.append(str(final_path))
+
+    for p in cand_files:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+    print(f"[FFmpeg] Extracted {len(final_extracted)} sharpness-selected frames spread evenly in time (target={target_count}, duration={duration:.1f}s)")
+    return final_extracted
 
 def check_early_rejection(frames_list):
     """
@@ -374,7 +500,7 @@ def check_early_rejection(frames_list):
     print(f"[PreCheck] Early quality check PASSED: brightness={avg_brightness:.1f}, blur={np.mean(blur_scores):.1f}, keypoints={avg_keypoints:.1f}, motion={avg_motion:.3f}")
     return True
 
-def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=20.0, max_frames=30):
+def filter_quality_frames(frames_list, output_filtered_dir, min_variance=15.0, min_brightness=20.0, max_frames=60):
     """
     Filters out near-black, blurry, duplicate, and low-texture frames before COLMAP.
     - Near-black / dark frames: dropped if mean brightness < 20 or max pixel < 40
@@ -928,7 +1054,7 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
     check_early_rejection(raw_frames)
 
     # Step 2: Quality & Blur filtering
-    filtered_frames = filter_quality_frames(raw_frames, str(filtered_dir))
+    filtered_frames = filter_quality_frames(raw_frames, str(filtered_dir), max_frames=len(raw_frames))
 
     # Step 3 & 4: COLMAP SfM (feature matching, poses, sparse 3D geometry)
     report_stage("features", 45, "Extracting 2D feature points (SIFT)", callback_url, project_id, job_id)
