@@ -12,7 +12,7 @@ Last Updated: 2026-11-01
 
 ## Phase A — Measure First
 - [x] **Step 1:** Create `backend/test-videos/` (gitignored) and check for `big.mp4` / test videos. (Found `big.mp4` [187MB, 85s] and `video_20261101_095812.mp4` [111MB, 51s] on Desktop and copied into `namma/backend/test-videos/`, both gitignored).
-- [ ] **Step 2:** Write `scripts/bench` (benchmark runner enforcing memory/time aborts, writing to `docs/BENCHMARKS.md`).
+- [x] **Step 2:** Write `scripts/bench` (benchmark runner enforcing memory/time aborts, writing to `docs/BENCHMARKS.md`). Created `scripts/bench.py` with memory/time abort monitor (<6.5GB, <8min) and multi-shell wrappers (`bench`, `bench.ps1`, `bench.cmd`).
 - [ ] **Step 3:** Record baseline benchmark with current default config on `big.mp4`.
 - [ ] **Step 4:** Capture Coach pre-check (cheap video analysis at ~2 fps ≤ 640 px: brightness range, blur ratio, keypoints, consecutive match overlap, tips & problematic ranges, UI integration).
 
