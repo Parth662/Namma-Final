@@ -16,7 +16,7 @@ const reconstructionJobSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['created', 'queued', 'processing', 'completed', 'failed', 'rejected', 'cancelled'],
+      enum: ['created', 'queued', 'processing', 'completed', 'partial', 'failed', 'rejected', 'cancelled'],
       default: 'queued',
       index: true,
     },

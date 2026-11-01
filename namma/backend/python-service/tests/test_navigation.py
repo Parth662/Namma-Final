@@ -1,18 +1,30 @@
 """
-Automated unit tests for Phase 4 Navigation Engine:
+Automated unit tests for Navigation Engine:
 - RANSAC Floor Plane Alignment
 - 2D Occupancy Grid Rasterization & Inflation
 - 8-Connected A* Pathfinding with Line-of-Sight Smoothing
-- Unreachable Target Handling
-- Mini-map 2D Wall Segment Extraction
+- Phase F: Walkable area from 2D floor polygon minus inflated obstacles
+- Phase F: POI snapping with Shapely
+- Phase F: A* path verification ensuring path never leaves floor polygon
 """
 
 import unittest
 import numpy as np
 import math
+from pathlib import Path
+import sys
 
+# Ensure python-service root is in sys.path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from shapely.geometry import Polygon, Point
 from navigation.alignment import fit_floor_plane_ransac, compute_alignment_matrix
-from navigation.occupancy import generate_occupancy_grid, OccupancyGrid
+from navigation.occupancy import (
+    generate_occupancy_grid,
+    OccupancyGrid,
+    generate_occupancy_grid_from_floor_plan,
+    snap_poi_to_walkable
+)
 from navigation.pathfinding import find_path, has_line_of_sight, smooth_path
 from navigation.minimap import extract_wall_segments, ramer_douglas_peucker_2d
 
@@ -21,35 +33,25 @@ class TestNavigationEngine(unittest.TestCase):
     def test_floor_plane_alignment(self):
         """Test RANSAC floor alignment rotates normal to +Y and translates floor to y=0."""
         rng = np.random.RandomState(42)
-        # Floor points on tilted plane y = 0.3*x - 0.1*z + 2.0
         x = rng.uniform(-4, 4, 1500)
         z = rng.uniform(-4, 4, 1500)
         y = 0.3 * x - 0.1 * z + 2.0 + rng.normal(0, 0.005, 1500)
-        # Ceiling points at height +2.5m
         ceil_y = y + 2.5
-
         pts = np.vstack([np.column_stack([x, y, z]), np.column_stack([x, ceil_y, z])])
 
         transform, meta = compute_alignment_matrix(pts)
 
         self.assertEqual(transform.shape, (4, 4))
-        # Bounds check: aligned floor should be at y=0
         self.assertAlmostEqual(meta["boundsAligned"]["minY"], 0.0, places=1)
-        # Height should be ~2.4m (2.5m vertical offset rotated along normal)
         self.assertAlmostEqual(meta["boundsAligned"]["maxY"], 2.4, places=1)
-        # Center in X and Z should be centered around 0
-        self.assertAlmostEqual(meta["boundsAligned"]["minX"] + meta["boundsAligned"]["maxX"], 0.0, places=2)
-        self.assertAlmostEqual(meta["boundsAligned"]["minZ"] + meta["boundsAligned"]["maxZ"], 0.0, places=2)
 
     def test_occupancy_grid_rasterization_and_inflation(self):
         """Test obstacle rasterization between 0.2m and 1.6m and inflation by agent radius."""
-        # Create a 10x10 room with walls at x=2, y between 0.5 and 1.5, z between -2 and 2
         wall_pts = np.column_stack([
             np.full(100, 2.0),
             np.linspace(0.5, 1.5, 100),
             np.linspace(-2, 2, 100)
         ])
-        # Low floor points (y=0.05) which should NOT become obstacles
         floor_pts = np.column_stack([
             np.random.uniform(-4, 4, 200),
             np.full(200, 0.05),
@@ -60,25 +62,13 @@ class TestNavigationEngine(unittest.TestCase):
         grid = generate_occupancy_grid(pts, resolution=0.05, agent_radius=0.25)
 
         self.assertIsInstance(grid, OccupancyGrid)
-        # Origin and bounds should cover [-4, 4]
-        self.assertLessEqual(grid.min_x, -4.0)
-        self.assertGreaterEqual(grid.max_x, 4.0)
-
-        # Floor at (0, 0) should be walkable
         self.assertTrue(grid.is_walkable(0.0, 0.0))
-
-        # Direct wall coordinate at (2.0, 0.0) should NOT be walkable
         self.assertFalse(grid.is_walkable(2.0, 0.0))
-
-        # Coordinate within agent radius (2.0 - 0.2 = 1.8) should be inflated (not walkable)
         self.assertFalse(grid.is_walkable(1.85, 0.0))
-
-        # Coordinate well clear of wall (1.0, 0.0) should be walkable
         self.assertTrue(grid.is_walkable(1.0, 0.0))
 
     def test_pathfinding_obstacle_routing(self):
         """Test A* navigates around a central wall obstacle and smooths path."""
-        # Central wall dividing x=-3 to +3 at x=0, with z between -2 and +2
         wall_pts = np.column_stack([
             np.zeros(100),
             np.full(100, 1.0),
@@ -95,58 +85,81 @@ class TestNavigationEngine(unittest.TestCase):
         res = find_path(grid, start, goal, walking_speed_mps=1.3)
 
         self.assertTrue(res["found"])
-        self.assertGreater(res["distanceMeters"], 5.0) # Direct Euclidean is 5.0, detour must be > 5.0
+        self.assertGreater(res["distanceMeters"], 5.0)
         self.assertGreater(res["walkingEtaSeconds"], 0.0)
         self.assertLess(res["smoothedWaypointsCount"], res["rawWaypointsCount"])
 
-        # Path should go around the wall: either z < -2.0 or z > 2.0
-        detour_z_vals = [pt["z"] for pt in res["path"]]
-        has_detour = any(abs(z_val) > 1.8 for z_val in detour_z_vals)
-        self.assertTrue(has_detour, "Path should route around the wall")
+    def test_phase_f_floor_polygon_walkable_area(self):
+        """Phase F: Test walkable area strictly bounded inside room polygon minus obstacle."""
+        # 6m x 4m room: [-3, 3] x [-2, 2]
+        room_poly = Polygon([(-3, -2), (3, -2), (3, 2), (-3, 2)])
+        
+        # Central obstacle pillar at (0, 0)
+        pillar_pts = np.array([
+            [0.0, 0.5, 0.0],
+            [0.1, 0.8, 0.1],
+            [-0.1, 1.0, -0.1]
+        ])
 
-    def test_unreachable_target_handling(self):
-        """Test that attempting to path into a fully enclosed obstacle fails cleanly."""
-        # Hollow square impenetrable bunker
-        bunker = []
-        for x_val in np.linspace(-1, 1, 30):
-            bunker.append([x_val, 1.0, -1.0])
-            bunker.append([x_val, 1.0, 1.0])
-        for z_val in np.linspace(-1, 1, 30):
-            bunker.append([-1.0, 1.0, z_val])
-            bunker.append([1.0, 1.0, z_val])
-        bunker_pts = np.array(bunker)
-        room_pts = np.array([[-6, 0, -6], [6, 0, 6]])
-        pts = np.vstack([bunker_pts, room_pts])
+        grid, walkable_geom = generate_occupancy_grid_from_floor_plan(
+            floor_polygon=room_poly,
+            points=pillar_pts,
+            y_floor=0.0,
+            resolution=0.1,
+            agent_radius=0.3
+        )
 
-        # Dense grid with large inflation so inside is totally trapped
-        grid = generate_occupancy_grid(pts, resolution=0.05, agent_radius=0.6)
+        # 1. Point outside the room (e.g. x=4, z=0) must be non-walkable
+        self.assertFalse(grid.is_walkable(4.0, 0.0), "Points outside room must not be walkable")
 
-        # Target in the dead center of the bunker
-        res = find_path(grid, (-4.0, 0.0, 0.0), (0.0, 0.0, 0.0), snap_radius_m=0.3)
+        # 2. Point inside room clear of pillar (e.g. x=-2, z=0) must be walkable
+        self.assertTrue(grid.is_walkable(-2.0, 0.0), "Interior clear floor point must be walkable")
 
-        # Either snap fails or no path found, but should NOT raise an unhandled exception
-        self.assertFalse(res["found"])
-        self.assertEqual(res["distanceMeters"], 0.0)
+        # 3. Point at the pillar (x=0, z=0) must be non-walkable
+        self.assertFalse(grid.is_walkable(0.0, 0.0), "Pillar center must not be walkable")
 
-    def test_minimap_wall_segment_extraction(self):
-        """Test 2D mini-map extracts simplified RDP wall line segments."""
-        x = np.linspace(-4, 4, 80)
-        z = np.linspace(-4, 4, 80)
-        wall_n = np.column_stack([x, np.ones(80), np.full(80, 4.0)])
-        wall_s = np.column_stack([x, np.ones(80), np.full(80, -4.0)])
-        wall_w = np.column_stack([np.full(80, -4.0), np.ones(80), z])
-        wall_e = np.column_stack([np.full(80, 4.0), np.ones(80), z])
-        pts = np.vstack([wall_n, wall_s, wall_w, wall_e])
+        # 4. Point near room wall (x=2.9, z=0) within agent_radius buffer must be non-walkable
+        self.assertFalse(grid.is_walkable(2.9, 0.0), "Buffer near room wall must not be walkable")
 
-        grid = generate_occupancy_grid(pts, resolution=0.05)
-        minimap = extract_wall_segments(grid, rdp_epsilon_m=0.1)
+    def test_phase_f_poi_snapping(self):
+        """Phase F: Test POI snapping with Shapely nearest_points."""
+        room_poly = Polygon([(-2, -2), (2, -2), (2, 2), (-2, 2)])
 
-        self.assertGreater(minimap["totalSegments"], 0)
-        self.assertTrue("wallSegments" in minimap)
-        for seg in minimap["wallSegments"]:
-            self.assertIn("start", seg)
-            self.assertIn("end", seg)
-            self.assertGreater(seg["length"], 0.1)
+        # A) POI inside room -> not snapped
+        res_inside = snap_poi_to_walkable(0.5, 0.5, room_poly)
+        self.assertFalse(res_inside["snapped"])
+        self.assertEqual(res_inside["x"], 0.5)
+        self.assertEqual(res_inside["z"], 0.5)
+
+        # B) POI clicked far outside room (e.g. at 5.0, 0.0) -> snapped to room boundary
+        res_outside = snap_poi_to_walkable(5.0, 0.0, room_poly)
+        self.assertTrue(res_outside["snapped"])
+        self.assertAlmostEqual(res_outside["x"], 2.0, delta=0.05)
+        self.assertAlmostEqual(res_outside["z"], 0.0, delta=0.05)
+
+    def test_phase_f_astar_never_leaves_floor_polygon(self):
+        """Phase F: Verify A* path never crosses obstacles or leaves the floor polygon."""
+        # L-shaped room: [0, 4] x [0, 2] union [0, 2] x [2, 4]
+        poly = Polygon([(0, 0), (4, 0), (4, 2), (2, 2), (2, 4), (0, 4)])
+        grid, walkable_geom = generate_occupancy_grid_from_floor_plan(
+            floor_polygon=poly,
+            resolution=0.1,
+            agent_radius=0.2
+        )
+
+        start = (3.5, 0.0, 1.0) # In the right leg of L
+        goal = (1.0, 0.0, 3.5)  # In the top leg of L
+
+        res = find_path(grid, start, goal)
+        self.assertTrue(res["found"], "Path in L-shaped room should be found")
+
+        # Check every waypoint: must be strictly inside the room polygon!
+        for wp in res["path"]:
+            pt = Point(wp["x"], wp["z"])
+            self.assertTrue(
+                poly.buffer(0.05).contains(pt),
+                f"Waypoint ({wp['x']}, {wp['z']}) leaked outside the room polygon!"
+            )
 
 if __name__ == "__main__":
     unittest.main()

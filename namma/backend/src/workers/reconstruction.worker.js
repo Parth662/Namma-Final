@@ -128,20 +128,27 @@ export const startReconstructionWorker = () => {
           throw customErr;
         }
 
-        // Finalize completed model
-        project.status = 'completed';
+        // Finalize completed / partial model
+        const isPartial = response.status === 'partial' || response.isPartial;
+        project.status = isPartial ? 'partial' : 'completed';
         project.progress = 100;
-        project.currentStage = 'DIGITAL TWIN READY';
+        project.currentStage = isPartial ? 'PARTIAL SCAN READY' : 'DIGITAL TWIN READY';
         project.source = response.source || 'photogrammetry';
         project.modelUrl = response.modelUrl || `/storage/projects/${projectId}/final/scene.glb`;
         project.thumbnailUrl = response.thumbnailUrl || `/storage/projects/${projectId}/preview/thumbnail.jpg`;
+        project.shellUrl = response.shellUrl || null;
+        project.floorplanUrl = response.floorplanUrl || null;
+        project.metricsUrl = response.metricsUrl || `/storage/projects/${projectId}/final/metrics.json`;
+        project.partialWarning = response.partialWarning || null;
+        project.partialTip = response.partialTip || null;
+        project.registeredRatio = typeof response.registeredRatio === 'number' ? response.registeredRatio : 1.0;
         if (response.boundingBox) project.boundingBox = response.boundingBox;
         if (response.metadata) project.reconstructionMetadata = response.metadata;
         await project.save();
 
-        reconJob.status = 'completed';
+        reconJob.status = isPartial ? 'partial' : 'completed';
         reconJob.progress = 100;
-        reconJob.currentStage = 'DIGITAL TWIN READY';
+        reconJob.currentStage = isPartial ? 'PARTIAL SCAN READY' : 'DIGITAL TWIN READY';
         reconJob.completedAt = new Date();
         reconJob.finalModelPath = response.finalModelPath;
         if (response.metadata) reconJob.metrics = response.metadata;
@@ -152,11 +159,20 @@ export const startReconstructionWorker = () => {
         await updateWaitingJobsQueuePositions();
 
         emitJobCompleted(projectId, {
+          status: project.status,
+          isPartial,
+          partialWarning: project.partialWarning,
+          partialTip: project.partialTip,
           modelUrl: project.modelUrl,
+          shellUrl: project.shellUrl,
+          floorplanUrl: project.floorplanUrl,
+          metricsUrl: project.metricsUrl,
           thumbnailUrl: project.thumbnailUrl,
           boundingBox: project.boundingBox,
           metadata: project.reconstructionMetadata,
-          message: 'Photorealistic 3D Digital Twin successfully generated!',
+          message: isPartial
+            ? `Partial 3D Scan generated (${project.partialWarning || ''})`
+            : 'Photorealistic 3D Digital Twin successfully generated!',
         });
 
         return { success: true };

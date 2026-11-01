@@ -764,9 +764,9 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         "--image_path", str(img_dir),
         "--output_path", str(sparse_path),
         "--Mapper.num_threads", "2",
-        "--Mapper.min_num_matches", "8",
-        "--Mapper.init_min_num_inliers", "50",
-        "--Mapper.abs_pose_min_num_inliers", "15",
+        "--Mapper.min_num_matches", "10",
+        "--Mapper.init_min_num_inliers", "60",
+        "--Mapper.abs_pose_min_num_inliers", "20",
         "--Mapper.abs_pose_min_inlier_ratio", "0.1",
         "--Mapper.max_extra_param", "1",
     ]
@@ -776,10 +776,8 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
         err_msg = format_process_error("COLMAP incremental mapper", res.returncode, res.stdout, res.stderr, log_path=log_file)
         raise ServerProcessingException(err_msg, log_path=str(log_file) if log_file else None)
 
-    # Find all reconstructed submodels in sparse/ and pick the BEST one (most 3D points)
-    subdirs = [
-        str(d) for d in sparse_path.iterdir() if d.is_dir()
-    ]
+    # Find all reconstructed submodels in sparse/ and evaluate registered stats
+    subdirs = [d for d in sparse_path.iterdir() if d.is_dir()]
     if not subdirs:
         raise InsufficientQualityException(
             "INSUFFICIENT_RECONSTRUCTION_QUALITY",
@@ -787,21 +785,59 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
             "Move the camera slowly in a wide arc around the subject, keeping it in frame at all times."
         )
 
-    def model_point_score(d):
+    import struct
+    def read_submodel_header(d):
         dp = Path(d)
-        pbin = dp / "points3D.bin"
-        ptxt = dp / "points3D.txt"
-        if pbin.is_file():
-            return pbin.stat().st_size
-        if ptxt.is_file():
-            return ptxt.stat().st_size
-        return 0
+        img_c = 0
+        pts_c = 0
+        img_bin = dp / "images.bin"
+        pts_bin = dp / "points3D.bin"
+        if img_bin.is_file():
+            try:
+                with open(img_bin, "rb") as f:
+                    img_c = struct.unpack("<Q", f.read(8))[0]
+            except Exception:
+                pass
+        if pts_bin.is_file():
+            try:
+                with open(pts_bin, "rb") as f:
+                    pts_c = struct.unpack("<Q", f.read(8))[0]
+            except Exception:
+                pass
+        return {"path": str(dp), "name": dp.name, "images": img_c, "points": pts_c}
 
-    subdirs.sort(key=model_point_score, reverse=True)
-    model_dir = subdirs[0]
-    best_score = model_point_score(model_dir)
-    print(f"[COLMAP] Evaluated {len(subdirs)} submodels. Selected best submodel '{Path(model_dir).name}' with points3D size {best_score} bytes")
+    submodel_stats = [read_submodel_header(d) for d in subdirs]
+    submodel_stats.sort(key=lambda s: s["images"], reverse=True)
 
+    total_submodel_images = sum(s["images"] for s in submodel_stats)
+    total_submodel_points = sum(s["points"] for s in submodel_stats)
+
+    model_dir = submodel_stats[0]["path"]
+    discarded_stats = []
+    discarded_points_total = 0
+
+    # Step 11: Multi-model handling (attempt model_merger if multiple submodels exist)
+    if len(submodel_stats) > 1:
+        merged_candidate = ws_dir / "merged_model"
+        cmd_merge = [
+            colmap_bin, "model_merger",
+            "--input_path1", submodel_stats[0]["path"],
+            "--input_path2", submodel_stats[1]["path"],
+            "--output_path", str(merged_candidate),
+            "--max_reproj_error", "64",
+        ]
+        res_merge = run_command(cmd_merge, job_id=job_id, timeout=60, log_path=log_file, env=colmap_env, check=False)
+        if res_merge.returncode == 0 and (merged_candidate / "images.bin").is_file():
+            print(f"[COLMAP] Successfully merged submodels '{submodel_stats[0]['name']}' and '{submodel_stats[1]['name']}' into unified model")
+            model_dir = str(merged_candidate)
+        else:
+            print(f"[COLMAP] Model merger unsuccessful. Kept dominant submodel '{submodel_stats[0]['name']}' ({submodel_stats[0]['images']} images, {submodel_stats[0]['points']} pts)")
+            for discarded in submodel_stats[1:]:
+                discarded_stats.append(discarded)
+                discarded_points_total += discarded["points"]
+            print(f"[COLMAP] Discarded {len(discarded_stats)} submodel(s) with total {discarded_points_total} points")
+
+    best_score = read_submodel_header(model_dir)["points"]
     if best_score <= 8:
         raise InsufficientQualityException(
             "INSUFFICIENT_RECONSTRUCTION_QUALITY",
@@ -850,9 +886,17 @@ def run_colmap_sfm(image_dir, workspace_dir, colmap_bin=None, job_id=None, log_f
             "Record a continuous loop around the location without sudden turns or blurred motion."
         )
 
-    return str(ply_path), registered_count, str(model_dir)
+    sfm_stats = {
+        "submodels": submodel_stats,
+        "discarded": discarded_stats,
+        "discardedPoints": discarded_points_total,
+        "totalSubmodelImages": total_submodel_images,
+        "totalSubmodelPoints": total_submodel_points
+    }
 
-def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, registered_frames_count=0):
+    return str(ply_path), registered_count, str(model_dir), sfm_stats
+
+def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, registered_frames_count=0, **kwargs):
     """
     Generates a dense surface mesh using Open3D and Trimesh,
     applies real photogrammetric vertex colors, centers the scene, and exports a valid GLB asset.
@@ -906,14 +950,15 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
     pcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.5, max_nn=30))
     pcd.orient_normals_consistent_tangent_plane(15)
 
-    # Mesh reconstruction via Poisson (depth 9 with tighter density trimming to prune empty bubbles)
+    # Mesh reconstruction via Poisson (depth 8 default for memory safety, conservative trimming at quantile 0.05)
+    poisson_depth = int(os.environ.get("POISSON_DEPTH", 8))
     mesh = None
     try:
         if len(points) >= 100:
-            poisson_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=9)
-            # Trim low density outer boundary bubbles (bottom 20%)
+            poisson_mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=poisson_depth)
+            # Conservative trimming: drop bottom 5% density to preserve room boundary
             densities = np.asarray(densities)
-            density_threshold = np.quantile(densities, 0.20)
+            density_threshold = np.quantile(densities, 0.05)
             vertices_to_remove = densities < density_threshold
             poisson_mesh.remove_vertices_by_mask(vertices_to_remove)
             
@@ -936,12 +981,14 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
 
     # Build Trimesh geometries
     os.makedirs(os.path.dirname(output_glb_path), exist_ok=True)
+    out_dir = Path(output_glb_path).parent
     
     pt_cloud = trimesh.PointCloud(
         vertices=points,
         colors=(np.clip(colors_boosted, 0, 1) * 255).astype(np.uint8)
     )
 
+    n_comp = 1
     if mesh is not None and len(mesh.triangles) > 30:
         v = np.asarray(mesh.vertices)
         f = np.asarray(mesh.triangles)
@@ -957,6 +1004,25 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             vertex_colors=(np.clip(c, 0, 1) * 255).astype(np.uint8),
             process=True
         )
+
+        # Remove tiny disconnected components (< 5% of largest component's triangle count)
+        try:
+            import scipy.sparse as sp
+            import scipy.sparse.csgraph as csgraph
+            adj = tri_mesh.face_adjacency
+            n_faces = len(tri_mesh.faces)
+            if len(adj) > 0:
+                mat = sp.coo_matrix((np.ones(len(adj)), (adj[:, 0], adj[:, 1])), shape=(n_faces, n_faces))
+                n_comp, labels = csgraph.connected_components(mat, directed=False)
+                counts = np.bincount(labels)
+                max_c = np.max(counts)
+                keep_comp = np.where(counts >= (0.05 * max_c))[0]
+                if len(keep_comp) < n_comp:
+                    keep_face_mask = np.isin(labels, keep_comp)
+                    tri_mesh = tri_mesh.submesh([keep_face_mask], append=True)
+                    print(f"[Meshing] Removed {n_comp - len(keep_comp)} tiny disconnected mesh fragments (< 5% of main structure)")
+        except Exception as e:
+            print(f"[Meshing] Component filtering note: {e}")
     else:
         tri_mesh = pt_cloud
 
@@ -985,13 +1051,34 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
 
     # Export to GLB with both surface mesh and authentic point cloud
     scene_glb = trimesh.Scene()
-    scene_glb.add_geometry(tri_mesh, node_name="surface_mesh")
-    scene_glb.add_geometry(pt_cloud, node_name="point_cloud")
+    scene_glb.add_geometry(tri_mesh, node_name="surface_mesh", geom_name="surface_mesh")
+    scene_glb.add_geometry(pt_cloud, node_name="point_cloud", geom_name="point_cloud")
     scene_glb.export(output_glb_path, file_type="glb")
+
+    # Step 5c: Structural Shell & Floor Plan Generation (Phase E)
+    shell_meta = {}
+    shell_success = False
+    try:
+        from structural_shell import detect_planes_and_build_shell
+        shell_res = detect_planes_and_build_shell(np.asarray(pt_cloud.vertices))
+        if shell_res["success"]:
+            shell_success = True
+            shell_meta = shell_res["metrics"]
+            # Export shell.glb
+            shell_glb_path = out_dir / "shell.glb"
+            shell_res["shell_scene"].export(str(shell_glb_path), file_type="glb")
+            # Export floorplan.geojson
+            floorplan_path = out_dir / "floorplan.geojson"
+            with open(floorplan_path, "w", encoding="utf-8") as f:
+                json.dump(shell_res["geojson"], f, indent=2)
+            print(f"[Pipeline] Structural shell exported ({shell_meta.get('area_sqm')} m², {shell_meta.get('wall_count')} walls, {shell_meta.get('inferred_wall_count')} inferred)")
+        else:
+            print(f"[Pipeline] Structural shell skipped: {shell_res.get('reason')}")
+    except Exception as e:
+        print(f"[Pipeline] Structural shell generation warning: {e}")
 
     # Generate preview thumbnail
     os.makedirs(os.path.dirname(thumbnail_path), exist_ok=True)
-    # Use first clear frame from filtered_frames or raw_frames
     proc_dir = os.path.dirname(os.path.dirname(ply_path))
     filtered_frames = sorted(
         glob.glob(os.path.join(proc_dir, "filtered_frames", "*.png"))
@@ -1012,49 +1099,93 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             "Please record the location again."
         )
 
-    # Step 5c: Generate 2D navigation occupancy grid and mini-map wall segments
+    # Step 5d: Generate 2D navigation occupancy grid
     navgrid_meta = {}
-    try:
-        from navigation.occupancy import generate_occupancy_grid
-        from navigation.minimap import extract_wall_segments
-
-        occ_grid = generate_occupancy_grid(tri_mesh, resolution=0.05, agent_radius=0.25)
-        wall_data = extract_wall_segments(occ_grid)
-
-        nav_dir = os.path.join(os.path.dirname(os.path.dirname(output_glb_path)), "navigation")
-        os.makedirs(nav_dir, exist_ok=True)
-        nav_file = os.path.join(nav_dir, "navgrid.json")
-
-        navgrid_payload = {
-            "resolution": occ_grid.resolution,
-            "origin": [occ_grid.min_x, occ_grid.min_z],
-            "width": occ_grid.width,
-            "height": occ_grid.height,
-            "bounds": {
-                "minX": occ_grid.min_x,
-                "maxX": occ_grid.max_x,
-                "minZ": occ_grid.min_z,
-                "maxZ": occ_grid.max_z,
-            },
-            "grid": occ_grid.grid.tolist(),
-            "wallSegments": wall_data.get("wallSegments", []),
-            "totalSegments": wall_data.get("totalSegments", 0),
-        }
-        with open(nav_file, "w") as f:
-            json.dump(navgrid_payload, f)
-
+    is_partial = kwargs.get("is_partial", False)
+    # Rule 12: Disable navigation graph generation for partial scans unless structural shell closed the floor polygon
+    if is_partial and not shell_success:
         navgrid_meta = {
-            "navigationReady": True,
-            "resolution": occ_grid.resolution,
-            "gridDimensions": [occ_grid.width, occ_grid.height],
-            "totalWallSegments": wall_data.get("totalSegments", 0),
+            "navigationReady": False,
+            "reason": "Navigation graph disabled on partial scan (floor polygon not closed)"
         }
-        print(f"[Pipeline] Navigation grid generated and saved to {nav_file}")
-    except Exception as e:
-        print(f"[Pipeline] Navigation grid generation warning: {e}")
+        print("[Pipeline] Navigation graph disabled for partial scan without closed floor plan")
+    else:
+        try:
+            from navigation.occupancy import generate_occupancy_grid_from_floor_plan, generate_occupancy_grid
+            from navigation.minimap import extract_wall_segments
+
+            if shell_success and shell_res.get("floor_polygon") is not None:
+                occ_grid, _ = generate_occupancy_grid_from_floor_plan(
+                    floor_polygon=shell_res["floor_polygon"],
+                    points=np.asarray(pt_cloud.vertices),
+                    y_floor=shell_res.get("y_floor", 0.0),
+                    resolution=0.05,
+                    agent_radius=0.30
+                )
+            else:
+                occ_grid = generate_occupancy_grid(tri_mesh, resolution=0.05, agent_radius=0.25)
+
+            wall_data = extract_wall_segments(occ_grid)
+
+            nav_dir = os.path.join(os.path.dirname(os.path.dirname(output_glb_path)), "navigation")
+            os.makedirs(nav_dir, exist_ok=True)
+            nav_file = os.path.join(nav_dir, "navgrid.json")
+
+            navgrid_payload = {
+                "resolution": occ_grid.resolution,
+                "origin": [occ_grid.min_x, occ_grid.min_z],
+                "width": occ_grid.width,
+                "height": occ_grid.height,
+                "bounds": {
+                    "minX": occ_grid.min_x,
+                    "maxX": occ_grid.max_x,
+                    "minZ": occ_grid.min_z,
+                    "maxZ": occ_grid.max_z,
+                },
+                "grid": occ_grid.grid.tolist(),
+                "wallSegments": wall_data.get("wallSegments", []),
+                "totalSegments": wall_data.get("totalSegments", 0),
+            }
+            with open(nav_file, "w") as f:
+                json.dump(navgrid_payload, f)
+
+            navgrid_meta = {
+                "navigationReady": True,
+                "resolution": occ_grid.resolution,
+                "gridDimensions": [occ_grid.width, occ_grid.height],
+                "totalWallSegments": wall_data.get("totalSegments", 0),
+            }
+            print(f"[Pipeline] Navigation grid generated and saved to {nav_file}")
+        except Exception as e:
+            print(f"[Pipeline] Navigation grid generation warning: {e}")
 
     vert_count = len(tri_mesh.vertices) if hasattr(tri_mesh, "vertices") else len(points)
     face_count = len(tri_mesh.faces) if hasattr(tri_mesh, "faces") else 0
+
+    # Step 15: Export metrics.json per project
+    metrics_payload = {
+        "registeredFrames": registered_frames_count,
+        "totalExtractedFrames": kwargs.get("total_extracted_frames", registered_frames_count),
+        "registeredRatio": round(kwargs.get("registered_ratio", 1.0), 4),
+        "sparsePoints": len(points),
+        "meshVertices": vert_count,
+        "meshTriangles": face_count,
+        "meshComponents": n_comp,
+        "detectedPlanes": {
+            "floor": shell_success,
+            "ceiling": (shell_success and not shell_res.get("ceiling_inferred", True)),
+            "walls": shell_meta.get("wall_count", 0) if shell_success else 0
+        },
+        "shell": shell_meta if shell_success else None,
+        "inferredPercentage": shell_meta.get("inferred_percentage", 0.0) if shell_success else 0.0,
+        "source": "photogrammetry",
+        "status": "partial" if is_partial else "completed"
+    }
+    try:
+        with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(metrics_payload, f, indent=2)
+    except Exception as e:
+        print(f"[Pipeline] metrics.json export note: {e}")
 
     return {
         "success": True,
@@ -1072,7 +1203,10 @@ def reconstruct_mesh_and_export_glb(ply_path, output_glb_path, thumbnail_path, r
             "maxZ": float(max_b[2]),
         },
         "alignment": alignment_meta,
-        "navigation": navgrid_meta
+        "navigation": navgrid_meta,
+        "shell": shell_meta if shell_success else None,
+        "shellSuccess": shell_success,
+        "metrics": metrics_payload
     }
 
 def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, callback_url=None):
@@ -1113,28 +1247,53 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
     report_stage("features", 45, "Extracting 2D feature points (SIFT)", callback_url, project_id, job_id)
     report_stage("matching", 60, "Matching feature descriptors across camera angles", callback_url, project_id, job_id)
     report_stage("sfm", 75, "Recovering 3D camera poses and sparse structure", callback_url, project_id, job_id)
-    ply_path, reg_count, _ = run_colmap_sfm(str(filtered_dir), str(colmap_dir), job_id=job_id, log_file=str(log_file_path))
+    ply_path, reg_count, _, sfm_stats = run_colmap_sfm(str(filtered_dir), str(colmap_dir), job_id=job_id, log_file=str(log_file_path))
+
+    # Step 12: Partial-result honesty evaluation
+    reg_ratio = float(reg_count) / max(1, len(filtered_frames))
+    total_sub_imgs = sfm_stats.get("totalSubmodelImages", reg_count)
+    submodel_share = (float(reg_count) / float(total_sub_imgs)) if total_sub_imgs > 0 else 1.0
+
+    is_partial = (reg_ratio < 0.40) or (submodel_share < 0.60)
+    pct_mapped = int(round(reg_ratio * 100))
+    partial_warning = f"Partial scan ({pct_mapped}% of room mapped)" if is_partial else None
+    partial_tip = "Camera traversed featureless walls or moved too quickly. Try recording with slower pacing and higher overlap." if is_partial else None
 
     # Step 5 & 6: Dense geometry, mesh generation & GLB export
     report_stage("meshing", 85, "Reconstructing 3D surface mesh geometry", callback_url, project_id, job_id)
     report_stage("export", 95, "Exporting and optimizing GLB digital twin", callback_url, project_id, job_id)
     recon_stats = reconstruct_mesh_and_export_glb(
-        ply_path, str(output_glb_path), str(thumbnail_path), registered_frames_count=reg_count
+        ply_path, str(output_glb_path), str(thumbnail_path),
+        registered_frames_count=reg_count,
+        is_partial=is_partial,
+        registered_ratio=reg_ratio,
+        total_extracted_frames=len(raw_frames)
     )
 
-    report_stage("completed", 100, "Photorealistic 3D Digital Twin successfully generated", callback_url, project_id, job_id)
+    stage_status = "partial" if is_partial else "completed"
+    report_stage(stage_status, 100, f"3D Digital Twin {'partially' if is_partial else 'successfully'} generated", callback_url, project_id, job_id)
 
     return {
         "success": True,
+        "status": stage_status,
+        "isPartial": is_partial,
+        "partialWarning": partial_warning,
+        "partialTip": partial_tip,
+        "registeredRatio": round(reg_ratio, 4),
         "source": "photogrammetry",
         "modelUrl": f"/storage/projects/{project_id}/final/scene.glb",
+        "shellUrl": f"/storage/projects/{project_id}/final/shell.glb" if recon_stats.get("shellSuccess") else None,
+        "floorplanUrl": f"/storage/projects/{project_id}/final/floorplan.geojson" if recon_stats.get("shellSuccess") else None,
+        "metricsUrl": f"/storage/projects/{project_id}/final/metrics.json",
         "thumbnailUrl": f"/storage/projects/{project_id}/preview/thumbnail.jpg",
         "finalModelPath": str(output_glb_path),
         "logPath": str(log_file_path),
         "boundingBox": recon_stats["boundingBox"],
         "metadata": {
+            "status": stage_status,
             "registeredFrames": recon_stats["registeredFrames"],
             "totalExtractedFrames": len(raw_frames),
+            "registeredRatio": round(reg_ratio, 4),
             "points3D": recon_stats["points3D"],
             "triangles": recon_stats["triangles"],
             "vertices": recon_stats["vertices"],
@@ -1142,6 +1301,8 @@ def run_pipeline(job_id, project_id, video_path, storage_dir, processing_dir, ca
             "reconstructionQuality": "COLMAP Structure-from-Motion & Multi-View Stereo",
             "scaleMeters": f"{recon_stats['boundingBox']['maxX'] - recon_stats['boundingBox']['minX']:.1f}m × {recon_stats['boundingBox']['maxY'] - recon_stats['boundingBox']['minY']:.1f}m × {recon_stats['boundingBox']['maxZ'] - recon_stats['boundingBox']['minZ']:.1f}m",
             "alignment": recon_stats.get("alignment", {}),
-            "navigation": recon_stats.get("navigation", {})
+            "navigation": recon_stats.get("navigation", {}),
+            "shell": recon_stats.get("shell"),
+            "metrics": recon_stats.get("metrics")
         }
     }

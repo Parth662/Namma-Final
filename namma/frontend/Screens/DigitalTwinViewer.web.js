@@ -14,15 +14,38 @@ import {
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import L from 'leaflet';
 import { getBackendBaseUrl, projectsApi, poisApi } from '../src/api/client';
 
 export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
   const containerRef = useRef(null);
   const miniMapCanvasRef = useRef(null);
+  const geoMapContainerRef = useRef(null);
+  const leafletMapRef = useRef(null);
+  const leafletMarkerRef = useRef(null);
+  const leafletPolygonLayerRef = useRef(null);
+  const shellModelRef = useRef(null);
+
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const isMobile = windowWidth < 768;
 
-  const [activeTab, setActiveTab] = useState('model'); // 'model' | 'pointcloud' | 'wireframe'
+  // Layer toggles (Phase D & E) - Point cloud default layer per Step 13
+  const [showMesh, setShowMesh] = useState(false);
+  const [showPoints, setShowPoints] = useState(true);
+  const [showShell, setShowShell] = useState(true);
+  const [pointSize, setPointSize] = useState(2.0);
+  const [shellInferredCount, setShellInferredCount] = useState(0);
+
+  // Geo Anchor states (Phase G)
+  const [showGeoModal, setShowGeoModal] = useState(false);
+  const [geoAnchor, setGeoAnchor] = useState({
+    lat: projectData?.geo?.lat || projectData?.latitude || 12.9716,
+    lng: projectData?.geo?.lng || projectData?.longitude || 77.5946,
+    headingDegrees: projectData?.geo?.headingDegrees || 0,
+  });
+
+  const [metricsData, setMetricsData] = useState(null);
+  const [activeTab, setActiveTab] = useState('pointcloud'); // 'model' | 'pointcloud' | 'wireframe'
   const [viewMode, setViewMode] = useState('orbit'); // 'orbit' | 'walk'
   const [isUnlit, setIsUnlit] = useState(false);
   const [showMetadata, setShowMetadata] = useState(false);
@@ -551,21 +574,104 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
     }
   }, [pois]);
 
-  // Synchronize unlit/flat material toggle
+  // Fetch detailed metrics on open
   useEffect(() => {
-    if (!loadedModelRef.current) return;
-    loadedModelRef.current.traverse((child) => {
-      if (child.isMesh) {
-        if (isUnlit && child.userData.unlitMaterial) {
-          child.material = child.userData.unlitMaterial;
-          child.material.wireframe = activeTab === 'wireframe';
-        } else if (!isUnlit && child.userData.shadedMaterial) {
-          child.material = child.userData.shadedMaterial;
-          child.material.wireframe = activeTab === 'wireframe';
+    if (showMetadata && projectId && projectId !== 'demo') {
+      projectsApi.getMetrics(projectId)
+        .then((res) => {
+          if (res.ok && res.data) setMetricsData(res.data);
+        })
+        .catch((e) => console.warn('Metrics fetch note:', e));
+    }
+  }, [showMetadata, projectId]);
+
+  // Synchronize 3-Way Layer Toggles: Mesh | Points | Shell, Point Size, Unlit Material
+  useEffect(() => {
+    if (loadedModelRef.current) {
+      loadedModelRef.current.traverse((child) => {
+        if (child.isMesh) {
+          child.visible = showMesh;
+          if (isUnlit && child.userData.unlitMaterial) {
+            child.material = child.userData.unlitMaterial;
+          } else if (!isUnlit && child.userData.shadedMaterial) {
+            child.material = child.userData.shadedMaterial;
+          }
         }
+      });
+    }
+    if (pointCloudMeshRef.current) {
+      pointCloudMeshRef.current.visible = showPoints;
+      if (pointCloudMeshRef.current.material) {
+        pointCloudMeshRef.current.material.size = Math.max(0.08, pointSize * 0.08);
       }
-    });
-  }, [isUnlit, activeTab]);
+    }
+    if (shellModelRef.current) {
+      shellModelRef.current.visible = showShell;
+    }
+  }, [showMesh, showPoints, showShell, pointSize, isUnlit]);
+
+  // Leaflet Map Placement initialization & update (Phase G)
+  useEffect(() => {
+    if (!showGeoModal) return;
+
+    if (typeof document !== 'undefined' && !document.getElementById('leaflet-css')) {
+      const link = document.createElement('link');
+      link.id = 'leaflet-css';
+      link.rel = 'stylesheet';
+      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(link);
+    }
+
+    const timer = setTimeout(async () => {
+      const el = geoMapContainerRef.current;
+      if (!el) return;
+
+      const initLat = geoAnchor.lat || resolvedProject.latitude || 12.9716;
+      const initLng = geoAnchor.lng || resolvedProject.longitude || 77.5946;
+
+      if (!leafletMapRef.current) {
+        const map = L.map(el, { center: [initLat, initLng], zoom: 19 });
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          maxZoom: 22,
+          attribution: '© OpenStreetMap contributors',
+        }).addTo(map);
+
+        const marker = L.marker([initLat, initLng], { draggable: true }).addTo(map);
+        marker.on('dragend', (e) => {
+          const pos = e.target.getLatLng();
+          setGeoAnchor((prev) => ({
+            ...prev,
+            lat: Number(pos.lat.toFixed(6)),
+            lng: Number(pos.lng.toFixed(6)),
+          }));
+        });
+
+        leafletMapRef.current = map;
+        leafletMarkerRef.current = marker;
+      }
+
+      // Load WGS84 Room Polygon
+      try {
+        const res = await projectsApi.getFloorplan(projectId, { wgs84: true });
+        if (res.ok && res.data && leafletMapRef.current) {
+          if (leafletPolygonLayerRef.current) {
+            leafletMapRef.current.removeLayer(leafletPolygonLayerRef.current);
+          }
+          const polyLayer = L.geoJSON(res.data, {
+            style: { color: '#0284c7', fillColor: '#38bdf8', fillOpacity: 0.45, weight: 2 },
+          }).addTo(leafletMapRef.current);
+          leafletPolygonLayerRef.current = polyLayer;
+          try {
+            leafletMapRef.current.fitBounds(polyLayer.getBounds().pad(0.3));
+          } catch {}
+        }
+      } catch (err) {
+        console.warn('Floorplan fetch note:', err);
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [showGeoModal, geoAnchor.headingDegrees]);
 
   // Load Photogrammetry Asset
   const loadPhotogrammetryAsset = (scene, camera) => {
@@ -623,17 +729,18 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
               sizeAttenuation: true,
               transparent: false,
             });
-            child.visible = (activeTab === 'pointcloud');
+            child.visible = showPoints;
           } else if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
+            child.visible = showMesh;
             if (child.material) {
               child.material.side = THREE.DoubleSide;
               child.userData.shadedMaterial = child.material;
               child.userData.unlitMaterial = new THREE.MeshBasicMaterial({
                 vertexColors: true,
                 side: THREE.DoubleSide,
-                wireframe: activeTab === 'wireframe',
+                wireframe: false,
               });
               if (isUnlit) {
                 child.material = child.userData.unlitMaterial;
@@ -671,12 +778,70 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           });
           const ptMesh = new THREE.Points(ptGeo, ptMat);
           ptMesh.position.copy(model.position);
-          ptMesh.visible = (activeTab === 'pointcloud');
+          ptMesh.visible = showPoints;
           scene.add(ptMesh);
           pointCloudMeshRef.current = ptMesh;
         }
 
         scene.add(model);
+
+        // Load structural shell.glb if present (Phase E)
+        const shellPath = resolvedProject.shellUrl || `/storage/projects/${projectId}/final/shell.glb`;
+        const fullShellUrl = shellPath.startsWith('/') ? `${backendHost}${shellPath}` : shellPath;
+        loader.load(
+          fullShellUrl,
+          (shellGltf) => {
+            const shellScene = shellGltf.scene;
+            let inferredCount = 0;
+            shellScene.traverse((child) => {
+              if (child.isMesh) {
+                child.receiveShadow = true;
+                if (child.name.includes('inferred_wall')) {
+                  inferredCount++;
+                  child.material = new THREE.MeshStandardMaterial({
+                    color: 0xf59e0b,
+                    transparent: true,
+                    opacity: 0.55,
+                    roughness: 0.4,
+                    side: THREE.DoubleSide,
+                  });
+                } else if (child.name.startsWith('wall')) {
+                  child.material = new THREE.MeshStandardMaterial({
+                    color: 0x94a3b8,
+                    transparent: true,
+                    opacity: 0.75,
+                    roughness: 0.6,
+                    side: THREE.DoubleSide,
+                  });
+                } else if (child.name === 'ceiling') {
+                  child.material = new THREE.MeshStandardMaterial({
+                    color: 0xe2e8f0,
+                    transparent: true,
+                    opacity: 0.35,
+                    roughness: 0.8,
+                    side: THREE.DoubleSide,
+                  });
+                } else if (child.name === 'floor') {
+                  child.material = new THREE.MeshStandardMaterial({
+                    color: 0xd1d5db,
+                    roughness: 0.9,
+                    side: THREE.DoubleSide,
+                  });
+                }
+              }
+            });
+            shellScene.position.copy(model.position);
+            shellScene.visible = showShell;
+            scene.add(shellScene);
+            shellModelRef.current = shellScene;
+            setShellInferredCount(inferredCount);
+            console.log(`[Viewer] Structural shell loaded with ${inferredCount} inferred walls`);
+          },
+          undefined,
+          (err) => {
+            console.log('[Viewer] Note: No separate shell.glb found for this scene');
+          }
+        );
 
         // Auto-frame camera based on model bounding sphere
         const sphere = box.getBoundingSphere(new THREE.Sphere());
@@ -871,6 +1036,38 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                     {isDemo ? 'Demo' : 'Photogrammetry'}
                   </Text>
                 </View>
+                {(resolvedProject.status === 'partial' || resolvedProject.isPartial) && (
+                  <View
+                    style={{
+                      backgroundColor: 'rgba(245, 158, 11, 0.25)',
+                      borderColor: '#f59e0b',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                      paddingHorizontal: 5,
+                      paddingVertical: 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#fbbf24' }}>
+                      Partial
+                    </Text>
+                  </View>
+                )}
+                {shellInferredCount > 0 && showShell && (
+                  <View
+                    style={{
+                      backgroundColor: 'rgba(245, 158, 11, 0.2)',
+                      borderColor: '#f59e0b',
+                      borderWidth: 1,
+                      borderRadius: 4,
+                      paddingHorizontal: 5,
+                      paddingVertical: 1,
+                    }}
+                  >
+                    <Text style={{ fontSize: 10, fontWeight: '700', color: '#fbbf24' }}>
+                      Inferred ({shellInferredCount})
+                    </Text>
+                  </View>
+                )}
               </View>
               <Text style={styles.headerSubtitle} numberOfLines={1}>
                 {resolvedProject.locationName || (isDemo ? 'Pre-baked Reference Scene' : '3D Reconstructed Environment')}
@@ -880,6 +1077,12 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           <View style={styles.headerRight}>
             <TouchableOpacity style={styles.demoHeaderBtn} onPress={handleLoadDemo}>
               <Text style={styles.demoHeaderBtnText}>🎮 Demo</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.hudToggleBtn, showGeoModal && styles.hudToggleBtnActive]}
+              onPress={() => setShowGeoModal(true)}
+            >
+              <Text style={styles.hudToggleText}>📍 Geo Map</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.arExportBtn, viewMode === 'walk' && styles.arExportBtnActive]}
@@ -903,6 +1106,16 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Step 12: Partial Scan Warning Banner */}
+        {(resolvedProject.status === 'partial' || resolvedProject.isPartial) && (
+          <View style={styles.partialScanBanner}>
+            <Text style={styles.partialScanText}>
+              ⚠️ <Text style={{ fontWeight: '700' }}>Partial scan ({resolvedProject.partialWarning || `${Math.round((resolvedProject.registeredRatio || 0.3) * 100)}% mapped`}):</Text>{' '}
+              {resolvedProject.partialTip || 'Camera moved too fast or traversed featureless walls. Ensure continuous visual overlap.'}
+            </Text>
+          </View>
+        )}
 
         {/* Viewport */}
         <View style={styles.viewport}>
@@ -928,7 +1141,7 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
             </View>
           )}
 
-          {/* Metrics Drawer */}
+          {/* Metrics Drawer (Step 15) */}
           {showMetadata && (
             <View style={styles.metricsCard}>
               <View style={styles.metricsHeader}>
@@ -944,86 +1157,127 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                 </Text>
               </View>
               <View style={styles.metricsRow}>
-                <Text style={styles.metricsLabel}>Frames Used:</Text>
-                <Text style={styles.metricsValue}>
-                  {resolvedProject.metadata?.registeredFrames || modelStats?.cameraPoses || '0'} / {resolvedProject.metadata?.totalExtractedFrames || '—'}
+                <Text style={styles.metricsLabel}>Status:</Text>
+                <Text style={[styles.metricsValue, { color: (resolvedProject.status === 'partial' || resolvedProject.isPartial) ? '#fbbf24' : '#34d399' }]}>
+                  {(resolvedProject.status === 'partial' || resolvedProject.isPartial) ? '⚠️ Partial Scan' : '✓ Completed'}
                 </Text>
               </View>
               <View style={styles.metricsRow}>
-                <Text style={styles.metricsLabel}>Registered Images:</Text>
+                <Text style={styles.metricsLabel}>Frames Used:</Text>
                 <Text style={styles.metricsValue}>
-                  {resolvedProject.metadata?.registeredFrames || modelStats?.cameraPoses || '0'}
+                  {metricsData?.registeredFrames || resolvedProject.metadata?.registeredFrames || modelStats?.cameraPoses || '0'} / {metricsData?.totalExtractedFrames || resolvedProject.metadata?.totalExtractedFrames || '—'}
+                  {' '}({Math.round((metricsData?.registeredRatio || resolvedProject.registeredRatio || 1.0) * 100)}%)
                 </Text>
               </View>
               <View style={styles.metricsRow}>
                 <Text style={styles.metricsLabel}>Sparse 3D Points:</Text>
                 <Text style={styles.metricsValue}>
-                  {(resolvedProject.metadata?.points3D || 0).toLocaleString()} pts
+                  {(metricsData?.sparsePoints || resolvedProject.metadata?.points3D || 0).toLocaleString()} pts
                 </Text>
               </View>
               <View style={styles.metricsRow}>
                 <Text style={styles.metricsLabel}>Mesh Triangles:</Text>
-                <Text style={styles.metricsValue}>{modelStats?.triangles || '0'}</Text>
+                <Text style={styles.metricsValue}>{metricsData?.meshTriangles || modelStats?.triangles || '0'}</Text>
               </View>
               <View style={styles.metricsRow}>
                 <Text style={styles.metricsLabel}>Mesh Vertices:</Text>
-                <Text style={styles.metricsValue}>{modelStats?.vertices || '0'}</Text>
+                <Text style={styles.metricsValue}>{metricsData?.meshVertices || modelStats?.vertices || '0'}</Text>
               </View>
               <View style={styles.metricsRow}>
-                <Text style={styles.metricsLabel}>Dimensions:</Text>
-                <Text style={styles.metricsValue}>{modelStats?.bounds || '—'}</Text>
+                <Text style={styles.metricsLabel}>Components:</Text>
+                <Text style={styles.metricsValue}>{metricsData?.meshComponents || '1'}</Text>
               </View>
+              <View style={styles.metricsRow}>
+                <Text style={styles.metricsLabel}>Detected Planes:</Text>
+                <Text style={styles.metricsValue}>
+                  Floor {metricsData?.detectedPlanes?.floor ? '✓' : '—'}, Ceil {metricsData?.detectedPlanes?.ceiling ? '✓' : 'Inferred'}, Walls {metricsData?.detectedPlanes?.walls || shellInferredCount || '—'}
+                </Text>
+              </View>
+              {metricsData?.shell && (
+                <>
+                  <View style={styles.metricsRow}>
+                    <Text style={styles.metricsLabel}>Room Floor Area:</Text>
+                    <Text style={styles.metricsValue}>{metricsData.shell.area_sqm} m²</Text>
+                  </View>
+                  <View style={styles.metricsRow}>
+                    <Text style={styles.metricsLabel}>Room Perimeter:</Text>
+                    <Text style={styles.metricsValue}>{metricsData.shell.perimeter_m} m</Text>
+                  </View>
+                  <View style={styles.metricsRow}>
+                    <Text style={styles.metricsLabel}>Ceiling Height:</Text>
+                    <Text style={styles.metricsValue}>{metricsData.shell.ceiling_height_m} m</Text>
+                  </View>
+                  <View style={styles.metricsRow}>
+                    <Text style={styles.metricsLabel}>Inferred Geometry:</Text>
+                    <Text style={[styles.metricsValue, { color: metricsData.shell.inferred_percentage > 0 ? '#fbbf24' : '#34d399' }]}>
+                      {metricsData.shell.inferred_percentage}% inferred
+                    </Text>
+                  </View>
+                </>
+              )}
               <View style={styles.metricsRow}>
                 <Text style={styles.metricsLabel}>Metric Scale:</Text>
                 <Text style={styles.metricsValue}>1 unit = {resolvedProject.metersPerUnit || 1.0}m</Text>
               </View>
+              <Text style={{ fontSize: 9, color: '#64748b', marginTop: 8, fontStyle: 'italic' }}>
+                Note: Geometry not directly captured by camera feature tracks is mathematically fitted and labeled inferred.
+              </Text>
             </View>
           )}
 
-          {/* Mode Tabs */}
+          {/* Mode Tabs & 3-Way Layer Toggles (Step 13, 19) */}
           {!loading && !errorState && (
             <View style={styles.modePillContainer}>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeScrollContent}>
                 <TouchableOpacity
-                  style={[styles.modePill, activeTab === 'model' && styles.modePillActive]}
-                  onPress={() => {
-                    setActiveTab('model');
-                    if (loadedModelRef.current) {
-                      loadedModelRef.current.traverse((child) => {
-                        if (child.isMesh) {
-                          child.visible = true;
-                          child.material.wireframe = false;
-                        }
-                        if (child.isPoints) child.visible = false;
-                      });
-                    }
-                    if (pointCloudMeshRef.current) pointCloudMeshRef.current.visible = false;
-                  }}
+                  style={[styles.modePill, showMesh && styles.modePillActive]}
+                  onPress={() => setShowMesh(!showMesh)}
                 >
-                  <Text style={[styles.modePillText, activeTab === 'model' && styles.modePillTextActive]}>🏛️ Mesh</Text>
+                  <Text style={[styles.modePillText, showMesh && styles.modePillTextActive]}>
+                    🏛️ Mesh {showMesh ? 'ON' : 'OFF'}
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.modePill, activeTab === 'pointcloud' && styles.modePillActive]}
-                  onPress={() => {
-                    setActiveTab('pointcloud');
-                    if (loadedModelRef.current) {
-                      loadedModelRef.current.traverse((child) => {
-                        if (child.isMesh) child.visible = false;
-                        if (child.isPoints) child.visible = true;
-                      });
-                    }
-                    if (pointCloudMeshRef.current) pointCloudMeshRef.current.visible = true;
-                  }}
+                  style={[styles.modePill, showPoints && styles.modePillActive]}
+                  onPress={() => setShowPoints(!showPoints)}
                 >
-                  <Text style={[styles.modePillText, activeTab === 'pointcloud' && styles.modePillTextActive]}>✨ Point Cloud</Text>
+                  <Text style={[styles.modePillText, showPoints && styles.modePillTextActive]}>
+                    ✨ Points {showPoints ? 'ON' : 'OFF'}
+                  </Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modePill, showShell && styles.modePillActive]}
+                  onPress={() => setShowShell(!showShell)}
+                >
+                  <Text style={[styles.modePillText, showShell && styles.modePillTextActive]}>
+                    📦 Shell {showShell ? 'ON' : 'OFF'}
+                  </Text>
+                </TouchableOpacity>
+
+                {/* Point size slider / counter */}
+                <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#1e293b', borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4 }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginRight: 6 }}>Size: {pointSize}px</Text>
+                  <TouchableOpacity onPress={() => setPointSize((p) => Math.max(1, p - 1))} style={{ paddingHorizontal: 4 }}>
+                    <Text style={{ color: '#38bdf8', fontSize: 13, fontWeight: '700' }}>-</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setPointSize((p) => Math.min(6, p + 1))} style={{ paddingHorizontal: 4 }}>
+                    <Text style={{ color: '#38bdf8', fontSize: 13, fontWeight: '700' }}>+</Text>
+                  </TouchableOpacity>
+                </View>
+
                 <TouchableOpacity
                   style={[styles.modePill, isUnlit && styles.modePillActive]}
                   onPress={() => setIsUnlit(!isUnlit)}
                 >
                   <Text style={[styles.modePillText, isUnlit && styles.modePillTextActive]}>
-                    {isUnlit ? '💡 Shaded Light' : '🎨 Flat / Unlit'}
+                    {isUnlit ? '💡 Shaded' : '🎨 Flat / Unlit'}
                   </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modePill, showGeoModal && styles.modePillActive]}
+                  onPress={() => setShowGeoModal(true)}
+                >
+                  <Text style={[styles.modePillText, showGeoModal && styles.modePillTextActive]}>📍 Map Anchor</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.modePill, isAddingPOI && styles.modePillActive]}
@@ -1047,6 +1301,58 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
                   <Text style={[styles.modePillText, isCalibrating && styles.modePillTextActive]}>📐 Calibrate</Text>
                 </TouchableOpacity>
               </ScrollView>
+            </View>
+          )}
+
+          {/* Geo Anchor & Map Placement Modal (Phase G) */}
+          {showGeoModal && (
+            <View style={styles.geoModalOverlay}>
+              <View style={styles.geoModalCard}>
+                <View style={styles.geoModalHeader}>
+                  <Text style={styles.geoModalTitle}>📍 Geo Anchor & Map Placement</Text>
+                  <TouchableOpacity onPress={() => setShowGeoModal(false)}>
+                    <Text style={{ color: '#94a3b8', fontSize: 16 }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+                <div ref={geoMapContainerRef} style={{ width: '100%', height: 310, outline: 'none' }} />
+                <View style={{ padding: 12 }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, marginBottom: 8 }}>
+                    Drag pin to position room twin on earth. Local metric floor plan is transformed to WGS84 using pyproj (AEQD).
+                  </Text>
+                  <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ color: '#f8fafc', fontSize: 12, fontWeight: '600' }}>
+                      Heading: {geoAnchor.headingDegrees}°
+                    </Text>
+                    <input
+                      type="range"
+                      min="0"
+                      max="359"
+                      value={geoAnchor.headingDegrees}
+                      onChange={(e) => setGeoAnchor({ ...geoAnchor, headingDegrees: Number(e.target.value) })}
+                      style={{ flex: 1, accentColor: '#0284c7' }}
+                    />
+                  </View>
+                  <View style={{ flexDirection: 'row', gap: 8 }}>
+                    <TouchableOpacity
+                      style={styles.dialogPrimaryBtn}
+                      onPress={async () => {
+                        try {
+                          await projectsApi.patchGeo(projectId, geoAnchor);
+                          showToast(`✓ Geo anchor saved: (${geoAnchor.lat}, ${geoAnchor.lng}, ${geoAnchor.headingDegrees}°)`);
+                          setShowGeoModal(false);
+                        } catch (e) {
+                          showToast('Failed to save geo anchor');
+                        }
+                      }}
+                    >
+                      <Text style={styles.dialogPrimaryBtnText}>Save Anchor</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.dialogSecondaryBtn} onPress={() => setShowGeoModal(false)}>
+                      <Text style={styles.dialogSecondaryBtnText}>Close</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
             </View>
           )}
 
@@ -1272,4 +1578,68 @@ const styles = StyleSheet.create({
   },
   metricsLabel: { color: '#94a3b8', fontSize: 11 },
   metricsValue: { color: '#f1f5f9', fontSize: 11, fontWeight: '600' },
+  partialScanBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.95)',
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    borderBottomWidth: 1,
+    borderBottomColor: '#d97706',
+  },
+  partialScanText: {
+    color: '#0f172a',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  inferredBadge: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: '#f59e0b',
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  inferredBadgeText: {
+    color: '#fbbf24',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  geoModalOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    zIndex: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  geoModalCard: {
+    width: '90%',
+    maxWidth: 620,
+    backgroundColor: '#0f172a',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#38bdf8',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.6,
+    shadowRadius: 15,
+  },
+  geoModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  geoModalTitle: {
+    color: '#f8fafc',
+    fontSize: 13,
+    fontWeight: '700',
+  },
 });

@@ -69,6 +69,21 @@ class PythonService {
       return { success: false, error: error.message, hopeless: false };
     }
   }
+
+  async transformGeoJson(params) {
+    const url = `${this.baseUrl}/api/geo/transform`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+      return await res.json();
+    } catch (error) {
+      console.error(`[PythonService] Geo transform error:`, error.message);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 export const pythonService = new PythonService();

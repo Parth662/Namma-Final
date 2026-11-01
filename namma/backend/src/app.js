@@ -55,10 +55,12 @@ export const createApp = () => {
       status: 'ok',
       service: '3d-location-reconstruction-backend',
       timestamp: new Date().toISOString(),
+      engineMode: pythonHealth.mode || 'CPU',
       dependencies: {
         mongodb: mongoStatus,
         redis: redisStatus,
         pythonService: pythonHealth.online ? 'connected' : 'offline',
+        pythonMode: pythonHealth.mode || 'CPU',
       },
     });
   });

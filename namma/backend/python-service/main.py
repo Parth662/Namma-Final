@@ -39,6 +39,56 @@ class CancelRequest(BaseModel):
 class CoachRequest(BaseModel):
     videoPath: str
 
+class GeoTransformRequest(BaseModel):
+    lat: float
+    lng: float
+    headingDegrees: float = 0.0
+    geojson: dict
+
+@app.post("/api/geo/transform")
+def transform_geojson_to_wgs84(req: GeoTransformRequest):
+    """
+    Transforms local metric coordinates (x, z) to EPSG:4326 (lng, lat)
+    using pyproj Azimuthal Equidistant projection centered on the geo anchor.
+    """
+    import math
+    import json
+    import pyproj
+
+    try:
+        if not (-90.0 <= req.lat <= 90.0) or not (-180.0 <= req.lng <= 180.0):
+            raise HTTPException(status_code=400, detail="Invalid lat/lng range")
+
+        proj = pyproj.Proj(proj="aeqd", lat_0=req.lat, lon_0=req.lng, datum="WGS84")
+        rad = math.radians(req.headingDegrees)
+        cos_h = math.cos(rad)
+        sin_h = math.sin(rad)
+
+        def transform_coords(coords):
+            if not coords:
+                return []
+            if isinstance(coords[0], (int, float)):
+                x, z = float(coords[0]), float(coords[1])
+                xr = x * cos_h - z * sin_h
+                zr = x * sin_h + z * cos_h
+                lon, lat = proj(xr, zr, inverse=True)
+                return [round(lon, 7), round(lat, 7)]
+            return [transform_coords(c) for c in coords]
+
+        transformed = json.loads(json.dumps(req.geojson))
+        for feat in transformed.get("features", []):
+            geom = feat.get("geometry", {})
+            if "coordinates" in geom:
+                geom["coordinates"] = transform_coords(geom["coordinates"])
+
+        return {
+            "success": True,
+            "anchor": {"lat": req.lat, "lng": req.lng, "headingDegrees": req.headingDegrees},
+            "geojson": transformed
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Geo transformation error: {str(e)}")
+
 @app.post("/api/coach/analyze")
 def analyze_coach(req: CoachRequest):
     print(f"[PythonEngine] Running Capture Coach analysis on {req.videoPath}")

@@ -1,8 +1,11 @@
+import fs from 'fs';
+import path from 'path';
 import { Project } from '../models/Project.js';
 import { ReconstructionJob } from '../models/ReconstructionJob.js';
 import { POI } from '../models/POI.js';
 import { storageService } from '../services/storage.service.js';
 import { navigationService } from '../services/navigation.service.js';
+import { env } from '../config/environment.js';
 
 export const createProject = async (req, res, next) => {
   try {
@@ -178,7 +181,7 @@ export const getProjectModel = async (req, res, next) => {
       });
     }
 
-    if (project.status !== 'completed') {
+    if (project.status !== 'completed' && project.status !== 'partial') {
       return res.status(400).json({
         success: false,
         status: project.status,
@@ -189,14 +192,22 @@ export const getProjectModel = async (req, res, next) => {
     res.status(200).json({
       projectId: project._id,
       status: project.status,
+      isPartial: project.status === 'partial',
+      partialWarning: project.partialWarning || null,
+      partialTip: project.partialTip || null,
+      registeredRatio: project.registeredRatio || 1.0,
       source: project.source || (project.isDemo ? 'demo' : 'photogrammetry'),
       isDemo: Boolean(project.isDemo),
       model: {
         format: project.outputType || 'glb',
         url: project.modelUrl,
+        shellUrl: project.shellUrl || null,
+        floorplanUrl: project.floorplanUrl || null,
+        metricsUrl: project.metricsUrl || null,
         thumbnail: project.thumbnailUrl || project.previewUrl,
         availableLODs: project.reconstructionMetadata?.availableLODs || ['lod0'],
       },
+      geo: project.geo || null,
       bounds: project.boundingBox,
       metadata: project.reconstructionMetadata,
     });
@@ -270,6 +281,170 @@ export const calibrateProject = async (req, res, next) => {
         metersPerUnit: project.metersPerUnit,
         calibration: project.calibration,
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Geo Anchor: PATCH /api/projects/:id/geo
+export const updateProjectGeo = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { lat, lng, headingDegrees } = req.body;
+
+    if (typeof lat !== 'number' || lat < -90 || lat > 90) {
+      return res.status(400).json({ success: false, error: 'Valid latitude between -90 and 90 is required' });
+    }
+    if (typeof lng !== 'number' || lng < -180 || lng > 180) {
+      return res.status(400).json({ success: false, error: 'Valid longitude between -180 and 180 is required' });
+    }
+
+    const heading = typeof headingDegrees === 'number' ? ((headingDegrees % 360) + 360) % 360 : 0;
+
+    const query = { _id: id };
+    if (req.user && req.user._id) {
+      query.$or = [{ userId: req.user._id }, { isDemo: true }];
+    }
+    const project = await Project.findOne(query);
+
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+
+    project.geo = {
+      lat,
+      lng,
+      headingDegrees: heading,
+    };
+    project.latitude = lat;
+    project.longitude = lng;
+    await project.save();
+
+    res.status(200).json({
+      success: true,
+      geo: project.geo,
+      message: 'Geographic anchor successfully updated',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Floor Plan GeoJSON: GET /api/projects/:id/floorplan
+export const getProjectFloorplan = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id);
+
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+
+    const storageDir = env.STORAGE_DIR || path.join(process.cwd(), 'storage');
+    const floorplanFile = path.join(storageDir, 'projects', String(id), 'final', 'floorplan.geojson');
+
+    let geojsonData = null;
+    if (fs.existsSync(floorplanFile)) {
+      try {
+        geojsonData = JSON.parse(fs.readFileSync(floorplanFile, 'utf-8'));
+      } catch (e) {
+        console.warn('[ProjectController] Error reading floorplan.geojson:', e.message);
+      }
+    }
+
+    if (!geojsonData) {
+      // Fallback synthetic room polygon based on bounding box
+      const minX = project.boundingBox?.minX || -2.5;
+      const maxX = project.boundingBox?.maxX || 2.5;
+      const minZ = project.boundingBox?.minZ || -2.0;
+      const maxZ = project.boundingBox?.maxZ || 2.0;
+      geojsonData = {
+        type: 'FeatureCollection',
+        features: [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Polygon',
+              coordinates: [
+                [
+                  [minX, minZ],
+                  [maxX, minZ],
+                  [maxX, maxZ],
+                  [minX, maxZ],
+                  [minX, minZ],
+                ],
+              ],
+            },
+            properties: {
+              area_sqm: Number(((maxX - minX) * (maxZ - minZ)).toFixed(2)),
+              perimeter_m: Number((2 * ((maxX - minX) + (maxZ - minZ))).toFixed(2)),
+              ceiling_height_m: Number(((project.boundingBox?.maxY || 2.5) - (project.boundingBox?.minY || 0.0)).toFixed(2)),
+              source: 'bounding_box_inferred',
+            },
+          },
+        ],
+      };
+    }
+
+    // Check if WGS84 projection is requested and geo anchor exists
+    if (req.query.wgs84 === 'true' && project.geo && typeof project.geo.lat === 'number') {
+      try {
+        const { pythonService } = await import('../services/python.service.js');
+        const transformed = await pythonService.transformGeoJson({
+          lat: project.geo.lat,
+          lng: project.geo.lng,
+          headingDegrees: project.geo.headingDegrees || 0,
+          geojson: geojsonData,
+        });
+        if (transformed && transformed.success) {
+          return res.status(200).json(transformed.geojson);
+        }
+      } catch (e) {
+        console.warn('[ProjectController] Error transforming GeoJSON to WGS84:', e.message);
+      }
+    }
+
+    res.status(200).json(geojsonData);
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Metrics: GET /api/projects/:id/metrics
+export const getProjectMetrics = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const project = await Project.findById(id);
+
+    if (!project) {
+      return res.status(404).json({ success: false, error: 'Project not found' });
+    }
+
+    const storageDir = env.STORAGE_DIR || path.join(process.cwd(), 'storage');
+    const metricsFile = path.join(storageDir, 'projects', String(id), 'final', 'metrics.json');
+
+    if (fs.existsSync(metricsFile)) {
+      try {
+        const metricsData = JSON.parse(fs.readFileSync(metricsFile, 'utf-8'));
+        return res.status(200).json(metricsData);
+      } catch (e) {
+        console.warn('[ProjectController] Error reading metrics.json:', e.message);
+      }
+    }
+
+    // Fallback metrics from reconstruction metadata
+    const meta = project.reconstructionMetadata || {};
+    res.status(200).json({
+      registeredFrames: meta.registeredFrames || 0,
+      totalExtractedFrames: meta.totalExtractedFrames || meta.registeredFrames || 0,
+      registeredRatio: project.registeredRatio || 1.0,
+      sparsePoints: meta.points3D || 0,
+      meshVertices: meta.vertices || 0,
+      meshTriangles: meta.triangles || 0,
+      source: project.source || (project.isDemo ? 'demo' : 'photogrammetry'),
+      status: project.status,
+      inferredPercentage: 0.0,
     });
   } catch (error) {
     next(error);

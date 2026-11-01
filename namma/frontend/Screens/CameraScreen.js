@@ -112,6 +112,20 @@ export default function CameraScreen() {
     }
   }, [cameraActive]);
 
+  const [engineProvider, setEngineProvider] = useState('CPU');
+
+  useEffect(() => {
+    const fetchEngineMode = async () => {
+      try {
+        const baseUrl = getBackendBaseUrl();
+        const res = await fetch(`${baseUrl}/api/health`);
+        const json = await res.json();
+        if (json.engineMode) setEngineProvider(json.engineMode);
+      } catch {}
+    };
+    fetchEngineMode();
+  }, []);
+
   const formatTimer = (totalSeconds) => {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
@@ -1052,6 +1066,23 @@ export default function CameraScreen() {
             )}
           </View>
           <View style={styles.headerRightButtons}>
+            <View
+              style={{
+                backgroundColor: engineProvider === 'CUDA' ? 'rgba(16, 185, 129, 0.18)' : 'rgba(14, 165, 233, 0.15)',
+                borderColor: engineProvider === 'CUDA' ? '#10b981' : '#38bdf8',
+                borderWidth: 1,
+                borderRadius: 6,
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                marginRight: 4,
+                justifyContent: 'center',
+                alignItems: 'center',
+              }}
+            >
+              <Text style={{ color: engineProvider === 'CUDA' ? '#34d399' : '#38bdf8', fontSize: 11, fontWeight: '700' }}>
+                {engineProvider === 'CUDA' ? '🚀 Remote GPU' : '⚡ Local CPU'}
+              </Text>
+            </View>
             <TouchableOpacity
               style={styles.mapHeaderBtn}
               onPress={() => setShowMap(true)}

@@ -18,6 +18,7 @@ export const env = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
   REDIS_URL: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   RECON_ENGINE_URL: process.env.RECON_ENGINE_URL || process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:5002',
+  ENGINE_API_KEY: process.env.ENGINE_API_KEY || null,
   PYTHON_SERVICE_URL: process.env.RECON_ENGINE_URL || process.env.PYTHON_SERVICE_URL || 'http://127.0.0.1:5002',
   UPLOAD_DIR: path.resolve(rootDir, process.env.UPLOAD_DIR || './uploads'),
   PROCESSING_DIR: path.resolve(rootDir, process.env.PROCESSING_DIR || './processing'),

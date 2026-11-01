@@ -164,6 +164,14 @@ export const projectsApi = {
     apiFetch(`/api/projects/${id}/cancel`, {
       method: 'POST',
     }),
+  patchGeo: (id, { lat, lng, headingDegrees }) =>
+    apiFetch(`/api/projects/${id}/geo`, {
+      method: 'PATCH',
+      body: JSON.stringify({ lat, lng, headingDegrees }),
+    }),
+  getFloorplan: (id, { wgs84 = false } = {}) =>
+    apiFetch(`/api/projects/${id}/floorplan${wgs84 ? '?wgs84=true' : ''}`),
+  getMetrics: (id) => apiFetch(`/api/projects/${id}/metrics`),
 };
 
 export const poisApi = {

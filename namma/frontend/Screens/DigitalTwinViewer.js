@@ -348,6 +348,16 @@ export default function DigitalTwinViewer({ onClose, onOpenMap, projectData }) {
           </View>
         </View>
 
+        {/* Step 12: Partial Scan Warning Banner */}
+        {(sampleProject.status === 'partial' || sampleProject.isPartial) && (
+          <View style={styles.partialScanBanner}>
+            <Text style={styles.partialScanText}>
+              ⚠️ <Text style={{ fontWeight: '700' }}>Partial scan ({sampleProject.partialWarning || `${Math.round((sampleProject.registeredRatio || 0.3) * 100)}% mapped`}):</Text>{' '}
+              {sampleProject.partialTip || 'Camera moved too fast or traversed featureless walls. Ensure continuous visual overlap.'}
+            </Text>
+          </View>
+        )}
+
         {/* Viewport */}
         <View style={styles.viewport}>
           {!errorState ? (
@@ -562,4 +572,21 @@ const styles = StyleSheet.create({
   errorTipText: { color: '#94a3b8', fontSize: 11, lineHeight: 16 },
   errorActionBtn: { backgroundColor: '#0284c7', paddingVertical: 10, borderRadius: 8, width: '100%', alignItems: 'center' },
   errorActionBtnText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  partialScanBanner: {
+    backgroundColor: 'rgba(245, 158, 11, 0.95)',
+    paddingVertical: 7,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 100,
+    borderBottomWidth: 1,
+    borderBottomColor: '#d97706',
+  },
+  partialScanText: {
+    color: '#0f172a',
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
 });

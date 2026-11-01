@@ -7,6 +7,9 @@ import {
   getProjectMetadata,
   getProjectModel,
   calibrateProject,
+  updateProjectGeo,
+  getProjectFloorplan,
+  getProjectMetrics,
 } from '../controllers/project.controller.js';
 import { handleVideoUpload } from '../controllers/upload.controller.js';
 import {
@@ -49,6 +52,9 @@ router.get('/:id/status', authenticate, getReconstructionStatus);
 router.get('/:id/metadata', authenticate, getProjectMetadata);
 router.get('/:id/model', authenticate, getProjectModel);
 router.post('/:id/calibrate', authenticate, calibrateProject);
+router.patch('/:id/geo', authenticate, updateProjectGeo);
+router.get('/:id/floorplan', optionalAuthenticate, getProjectFloorplan);
+router.get('/:id/metrics', optionalAuthenticate, getProjectMetrics);
 
 // Navigation & Pathfinding (Phase 4)
 router.get('/:id/navgrid', optionalAuthenticate, getProjectNavGrid);

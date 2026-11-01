@@ -54,7 +54,7 @@ const projectSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['created', 'uploaded', 'queued', 'processing', 'completed', 'failed', 'rejected', 'cancelled'],
+      enum: ['created', 'uploaded', 'queued', 'processing', 'completed', 'partial', 'failed', 'rejected', 'cancelled'],
       default: 'created',
       index: true,
     },
@@ -111,6 +111,35 @@ const projectSchema = new mongoose.Schema(
     modelUrl: {
       type: String,
       default: null,
+    },
+    shellUrl: {
+      type: String,
+      default: null,
+    },
+    floorplanUrl: {
+      type: String,
+      default: null,
+    },
+    metricsUrl: {
+      type: String,
+      default: null,
+    },
+    partialWarning: {
+      type: String,
+      default: null,
+    },
+    partialTip: {
+      type: String,
+      default: null,
+    },
+    registeredRatio: {
+      type: Number,
+      default: 1.0,
+    },
+    geo: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+      headingDegrees: { type: Number, default: 0 },
     },
     previewUrl: {
       type: String,
