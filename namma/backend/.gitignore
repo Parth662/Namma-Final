@@ -4,6 +4,7 @@ uploads/
 storage/
 processing/
 outputs/
+test-videos/
 python-service/venv/
 python-service/__pycache__/
 mongodb_data/
